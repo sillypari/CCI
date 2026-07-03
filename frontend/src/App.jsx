@@ -40,6 +40,8 @@ import {
   Target,
   Upload,
   Trash2,
+  Star,
+  Users,
   X,
   ZoomIn,
   ZoomOut
@@ -67,7 +69,6 @@ const navItems = [
   { icon: Clipboard, label: "Audit Log", path: "/audit" },
   { icon: Settings, label: "Settings", path: "/settings" }
 ];
-
 const emptyStats = {
   cases: 0,
   uploads: 0,
@@ -1950,7 +1951,45 @@ function normalizeGraphResponse(payload) {
     metrics: { ...emptyGraphData.metrics, ...(graph.metrics ?? {}) }
   };
 }
+function stableGraphHash(value) {
+  let hash = 2166136261;
+  const text = String(value ?? "");
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function seededUnit(value) {
+  return (stableGraphHash(value) % 10000) / 10000;
+}
+
+function fitGraphPositions(rawPositions, width, height, padding = 76) {
+  const values = [...rawPositions.values()];
+  if (!values.length) return rawPositions;
+  const minX = Math.min(...values.map((point) => point.x));
+  const maxX = Math.max(...values.map((point) => point.x));
+  const minY = Math.min(...values.map((point) => point.y));
+  const maxY = Math.max(...values.map((point) => point.y));
+  const spanX = Math.max(maxX - minX, 1);
+  const spanY = Math.max(maxY - minY, 1);
+  const scale = Math.min((width - padding * 2) / spanX, (height - padding * 2) / spanY, 1.18);
+  const midX = (minX + maxX) / 2;
+  const midY = (minY + maxY) / 2;
+  const fitted = new Map();
+  rawPositions.forEach((point, id) => {
+    fitted.set(id, {
+      x: width / 2 + (point.x - midX) * scale,
+      y: height / 2 + (point.y - midY) * scale
+    });
+  });
+  return fitted;
+}
+
 function layoutCommunicationGraph(nodes, links, width, height) {
+  if (!nodes.length) return new Map();
+
   const sourceNodes = nodes
     .filter((node) => node.kind === "source")
     .sort((a, b) => (b.count ?? 0) - (a.count ?? 0) || a.id.localeCompare(b.id));
@@ -1958,60 +1997,81 @@ function layoutCommunicationGraph(nodes, links, width, height) {
     .filter((node) => node.kind !== "source")
     .sort((a, b) => (b.count ?? 0) - (a.count ?? 0) || a.id.localeCompare(b.id));
   const sourceIds = new Set(sourceNodes.map((node) => node.id));
+  const primarySourceByTarget = new Map();
+
+  [...links]
+    .sort((a, b) => (b.count ?? 0) - (a.count ?? 0) || a.id.localeCompare(b.id))
+    .forEach((link) => {
+      if (sourceIds.has(link.sourceId) && !primarySourceByTarget.has(link.targetId)) {
+        primarySourceByTarget.set(link.targetId, link.sourceId);
+      }
+    });
+
   const positions = new Map();
-  const sourceSpacing = height / (sourceNodes.length + 1 || 2);
+  const centerX = width * 0.48;
+  const centerY = height * 0.5;
+  const sourceRadiusX = Math.min(190, Math.max(92, sourceNodes.length * 12));
+  const sourceRadiusY = Math.min(230, Math.max(105, sourceNodes.length * 16));
 
   sourceNodes.forEach((node, index) => {
+    if (sourceNodes.length === 1) {
+      positions.set(node.id, { x: centerX, y: centerY });
+      return;
+    }
+    const angle = -Math.PI / 2 + (index / sourceNodes.length) * Math.PI * 2;
     positions.set(node.id, {
-      x: sourceNodes.length <= 1 ? 190 : 150,
-      y: sourceNodes.length <= 1 ? height / 2 : sourceSpacing * (index + 1)
+      x: centerX + Math.cos(angle) * sourceRadiusX,
+      y: centerY + Math.sin(angle) * sourceRadiusY
     });
-  });
-
-  const destinationSource = new Map();
-  const rankedLinks = [...links].sort((a, b) => (b.count ?? 0) - (a.count ?? 0));
-  rankedLinks.forEach((link) => {
-    if (!sourceIds.has(link.sourceId) || destinationSource.has(link.targetId)) return;
-    destinationSource.set(link.targetId, link.sourceId);
-  });
-
-  const groupedDestinations = new Map(sourceNodes.map((source) => [source.id, []]));
-  destinationNodes.forEach((node) => {
-    const sourceId = destinationSource.get(node.id) ?? sourceNodes[0]?.id ?? "unassigned";
-    if (!groupedDestinations.has(sourceId)) groupedDestinations.set(sourceId, []);
-    groupedDestinations.get(sourceId).push(node);
   });
 
   if (!sourceNodes.length) {
-    const rows = Math.max(1, Math.ceil(Math.sqrt(destinationNodes.length || 1)));
     destinationNodes.forEach((node, index) => {
+      const ring = Math.floor(index / 18);
+      const slot = index % 18;
+      const slots = Math.min(18, destinationNodes.length - ring * 18);
+      const angle = (slot / Math.max(slots, 1)) * Math.PI * 2 + seededUnit(`${node.id}:angle`) * 0.18;
+      const radius = 115 + ring * 70;
       positions.set(node.id, {
-        x: 180 + Math.floor(index / rows) * 132,
-        y: 90 + (index % rows) * 74
+        x: centerX + Math.cos(angle) * radius,
+        y: centerY + Math.sin(angle) * radius * 0.78
       });
     });
-    return positions;
+    return fitGraphPositions(positions, width, height);
   }
 
+  const groups = new Map(sourceNodes.map((source) => [source.id, []]));
+  destinationNodes.forEach((node) => {
+    const sourceId = primarySourceByTarget.get(node.id) ?? sourceNodes[stableGraphHash(node.id) % sourceNodes.length]?.id;
+    if (!groups.has(sourceId)) groups.set(sourceId, []);
+    groups.get(sourceId).push(node);
+  });
+
   sourceNodes.forEach((source, sourceIndex) => {
-    const destinations = groupedDestinations.get(source.id) ?? [];
-    const sourcePoint = positions.get(source.id);
-    const rowsPerColumn = sourceNodes.length === 1 ? Math.max(6, Math.floor((height - 140) / 74)) : 7;
-    destinations.forEach((node, index) => {
-      const column = Math.floor(index / rowsPerColumn);
-      const row = index % rowsPerColumn;
-      const rowCount = Math.min(destinations.length - column * rowsPerColumn, rowsPerColumn);
-      const originY = sourceNodes.length === 1
-        ? 82
-        : sourcePoint.y - ((rowCount - 1) * 64) / 2;
+    const group = groups.get(source.id) ?? [];
+    const sourcePoint = positions.get(source.id) ?? { x: centerX, y: centerY };
+    const sourceAngle = sourceNodes.length === 1
+      ? 0
+      : Math.atan2(sourcePoint.y - centerY, sourcePoint.x - centerX);
+    const arc = sourceNodes.length === 1 ? Math.PI * 1.86 : Math.PI * 0.96;
+    const perRing = sourceNodes.length === 1 ? 22 : 12;
+
+    group.forEach((node, index) => {
+      const ring = Math.floor(index / perRing);
+      const slot = index % perRing;
+      const slots = Math.min(perRing, group.length - ring * perRing);
+      const local = slots <= 1 ? 0 : (slot / (slots - 1)) - 0.5;
+      const jitter = (seededUnit(`${node.id}:jitter`) - 0.5) * 0.16;
+      const angle = sourceAngle + local * arc + jitter + (sourceNodes.length === 1 ? 0 : sourceIndex * 0.018);
+      const radius = (sourceNodes.length === 1 ? 155 : 110) + ring * (sourceNodes.length === 1 ? 74 : 58);
       positions.set(node.id, {
-        x: 520 + column * 136 + (sourceIndex % 2) * 24,
-        y: originY + row * (sourceNodes.length === 1 ? 74 : 64)
+        x: sourcePoint.x + Math.cos(angle) * radius,
+        y: sourcePoint.y + Math.sin(angle) * radius * 0.82
       });
     });
   });
 
-  return positions;
+  return fitGraphPositions(positions, width, height);
 }
 function NetworkGraph({ graphData, selected, onSelect, onExtract }) {
   const VIEW_WIDTH = 1120;
@@ -2261,8 +2321,8 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract }) {
 
   const selectedNode = selected?.type === "node" ? selected.node : null;
   const selectedEdge = selected?.type === "edge" ? selected.link : null;
-  const denseGraph = graph.nodes.length > 300 || graph.links.length > 300;
-  const showLinkLabels = graph.links.length <= 160;
+  const denseGraph = graph.nodes.length > 80 || graph.links.length > 80;
+  const showLinkLabels = graph.links.length <= 42;
 
   return (
     <div className={`network-workspace ${denseGraph ? "is-dense" : ""}`}>
@@ -2309,6 +2369,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract }) {
                   const active = selectedEdge?.id === link.id;
                   const midX = (source.x + target.x) / 2;
                   const midY = (source.y + target.y) / 2;
+                  const linkWidth = denseGraph ? 1.3 + Math.min(Math.log1p(link.count || 1) * 0.38, 2.1) : 2 + Math.min(link.count, 4);
                   return (
                     <g key={link.id} className={`graph-link-group ${active ? "is-selected" : ""}`} onClick={() => onSelect({ type: "edge", link })}>
                       <line className="graph-link-hit" x1={source.x} y1={source.y} x2={target.x} y2={target.y} />
@@ -2318,8 +2379,8 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract }) {
                         y1={source.y}
                         x2={target.x}
                         y2={target.y}
-                        strokeWidth={2 + Math.min(link.count, 4)}
-                        markerEnd={`url(#arrow-${link.classification === "relay" ? "relay" : "p2p"})`}
+                        strokeWidth={linkWidth}
+                        markerEnd={denseGraph ? undefined : `url(#arrow-${link.classification === "relay" ? "relay" : "p2p"})`}
                       />
                       {showLinkLabels ? (
                         <text className="graph-link-label" x={midX} y={midY - 8} textAnchor="middle">{link.count} session{link.count === 1 ? "" : "s"}</text>
@@ -2701,6 +2762,32 @@ function SystemPanel({ stats, apiLive, persistence, createPersistenceSnapshot, r
           <Badge tone={persistence?.enabled ? "success" : "warning"}>{persistence?.enabled ? "Enabled" : "Pending"}</Badge>
           <span>{persistence?.last_snapshot_at ? `Last ${date(persistence.last_snapshot_at)}` : "No snapshot yet"}</span>
           <Button type="button" icon={Database} variant="secondary" onClick={snapshot} disabled={busy}>{busy ? "Writing" : "Write snapshot"}</Button>
+        </div>
+      </article>
+
+      {/* ── Project Team Credits ── */}
+      <article className="persistence-card" style={{ marginTop: "16px", borderColor: "rgba(99, 102, 241, 0.25)", background: "linear-gradient(135deg, rgba(99,102,241,0.05), transparent 70%)" }}>
+        <div style={{ width: "100%" }}>
+          <span style={{ color: "var(--color-brand)", fontWeight: "600", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.5px", display: "flex", alignItems: "center", gap: "6px" }}>
+            <Users size={13} /> Project Team
+          </span>
+          <strong style={{ display: "block", fontSize: "14px", marginTop: "6px", marginBottom: "14px" }}>Pramaan IPDR Engine — Built by</strong>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            {[
+              { name: "Parikshit Singh Bais", role: "Senior Developer", icon: "💻" },
+              { name: "Adarsh Singh",         role: "Project Manager",  icon: "🗂️" },
+              { name: "Akmal Qureshi",        role: "Researcher",       icon: "🔬" },
+            ].map((member) => (
+              <div key={member.name} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 14px", borderRadius: "8px", background: "var(--panel-bg)", border: "1px solid var(--border)" }}>
+                <span style={{ fontSize: "20px", lineHeight: 1 }}>{member.icon}</span>
+                <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                  <strong style={{ fontSize: "13px", color: "var(--color-text-primary)" }}>{member.name}</strong>
+                  <span style={{ fontSize: "11px", color: "var(--color-text-muted)", letterSpacing: "0.3px" }}>{member.role}</span>
+                </div>
+                <Star size={12} style={{ marginLeft: "auto", color: "var(--color-brand)", opacity: 0.6 }} />
+              </div>
+            ))}
+          </div>
         </div>
       </article>
 
