@@ -27,7 +27,7 @@ This repository is an implementation scaffold intended for hackathon validation 
 Implemented capabilities:
 
 - FastAPI API service with health, upload, session, extraction, package, search, audit, and settings endpoints.
-- Upload ingestion for delimited and JSON IPDR-style files with automatic delimiter handling, validation, persistence, and row quarantine reporting.
+- Upload ingestion through a required Polars parser for CSV, TSV, TXT, JSON, and Excel-style IPDR files, with automatic delimiter handling, format reporting, validation, persistence, and row quarantine reporting.
 - Session normalization into a common schema.
 - Classification of likely peer-to-peer traffic, relay/platform traffic, and unknown flows.
 - Known platform relay range detection for services such as WhatsApp, Telegram, and Google ranges included in the classifier.
@@ -88,6 +88,10 @@ Backend:
 - FastAPI
 - Pydantic and pydantic-settings
 - Uvicorn
+- Polars and FastExcel for required upload parsing
+- SQLAlchemy, asyncpg, and Alembic for the planned database layer
+- Celery and Redis for the planned worker pipeline
+- pyasn and GeoIP2 for offline ASN enrichment
 - Pytest
 
 Frontend:
@@ -98,6 +102,7 @@ Frontend:
 - React Router
 - Framer Motion
 - D3 force simulation
+- TanStack Table for planned large data tables
 - Lucide React icons
 - Inter and JetBrains Mono font packages
 
@@ -122,7 +127,7 @@ Infrastructure wiring:
 
 ## Supported Upload Format
 
-The parser expects delimited records with a header row or JSON records. CSV, TSV, semicolon-delimited, pipe-delimited text, and JSON arrays are suitable for the current implementation.
+The parser expects delimited records with a header row, JSON records, or Excel workbooks. CSV, TSV, semicolon-delimited, pipe-delimited text, JSON arrays, and XLS/XLSX files are suitable for the current implementation. Upload parsing is handled by Polars; there is no secondary CSV parser fallback.
 
 Recommended columns:
 

@@ -333,6 +333,7 @@ function DashboardPage({ data }) {
             <div className="metric-row">
               <span>{number(data.stats.latest_upload.rows_valid)} valid</span>
               <span>{number(data.stats.latest_upload.rows_quarantined)} quarantined</span>
+              <span>{data.stats.latest_upload.format_report?.parser_engine ?? "parser"}</span>
             </div>
           </div>
         ) : (
@@ -403,7 +404,7 @@ function UploadsPage({ uploads, uploadFile }) {
             id={fileInputId}
             className="upload-drop__input"
             type="file"
-            accept=".csv,.txt,.tsv,.json"
+            accept=".csv,.txt,.tsv,.json,.xlsx,.xls"
             onChange={(event) => setActiveFile(event.target.files?.[0] ?? null)}
           />
           <label
@@ -416,7 +417,7 @@ function UploadsPage({ uploads, uploadFile }) {
           >
             <span className="upload-drop__icon"><FileJson size={34} /></span>
             <strong>{activeFile ? activeFile.name : "Select IPDR evidence file"}</strong>
-            <span>{activeFile ? `${number(activeFile.size)} bytes ready for parsing` : "CSV, TSV, TXT, JSON"}</span>
+            <span>{activeFile ? `${number(activeFile.size)} bytes ready for parsing` : "CSV, TSV, TXT, JSON, XLSX"}</span>
             <span className="upload-drop__action">{activeFile ? "Change file" : "Browse file"}</span>
           </label>
           <Button icon={Upload} disabled={!activeFile}>
@@ -433,6 +434,8 @@ function UploadsPage({ uploads, uploadFile }) {
                 <th>File</th>
                 <th>Status</th>
                 <th>Rows</th>
+                <th>Format</th>
+                <th>Adapter</th>
                 <th>Progress</th>
               </tr>
             </thead>
@@ -442,9 +445,11 @@ function UploadsPage({ uploads, uploadFile }) {
                   <td>{upload.filename}</td>
                   <td><Badge tone={upload.status === "completed" ? "success" : upload.status === "failed" ? "danger" : "warning"}>{upload.status}</Badge></td>
                   <td>{number(upload.rows_valid)} / {number(upload.rows_total)}</td>
+                  <td><span className="mono">{upload.format_report?.file_format ?? "-"}</span></td>
+                  <td>{upload.format_report?.adapter ?? "-"}</td>
                   <td><Progress value={upload.progress} /></td>
                 </tr>
-              )) : <TableEmptyRow colSpan={4} label="No evidence files uploaded" />}
+              )) : <TableEmptyRow colSpan={6} label="No evidence files uploaded" />}
             </tbody>
           </table>
         </div>

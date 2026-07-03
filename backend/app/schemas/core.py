@@ -15,6 +15,18 @@ class QuarantineRecord(BaseModel):
     reason: str
 
 
+class UploadFormatReport(BaseModel):
+    parser_engine: str
+    file_format: str
+    delimiter: str | None = None
+    adapter: str
+    encoding: str
+    columns: list[str] = Field(default_factory=list)
+    rows_detected: int
+    missing_required: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
 class UploadStatus(BaseModel):
     id: str
     filename: str
@@ -27,6 +39,7 @@ class UploadStatus(BaseModel):
     completed_at: datetime | None = None
     message: str | None = None
     quarantine_errors: list[QuarantineRecord] = Field(default_factory=list)
+    format_report: UploadFormatReport | None = None
 
 
 class SessionRecord(BaseModel):

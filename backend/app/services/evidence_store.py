@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import csv
-import io
 import ipaddress
 import json
 import re
@@ -32,6 +30,7 @@ from app.schemas.core import (
     UploadStatus,
 )
 from app.services.classifier import PLATFORM_RELAYS, classify_ip
+from app.services.ingestion import IngestionError, parse_ipdr_upload
 
 IST = timezone(timedelta(hours=5, minutes=30))
 STORE_VERSION = 1
@@ -198,8 +197,14 @@ class EvidenceStore:
             raise UploadValidationError("Uploaded file is empty")
 
         safe_filename = self._safe_filename(filename or "ipdr_upload.csv")
-        decoded = self._decode_upload(content)
-        rows = self._parse_rows(decoded, safe_filename)
+        try:
+            parsed_upload = parse_ipdr_upload(safe_filename, content)
+        except IngestionError as exc:
+            raise UploadValidationError(str(exc)) from exc
+        if parsed_upload.report.missing_required:
+            missing = ", ".join(parsed_upload.report.missing_required)
+            raise UploadValidationError(f"Missing required column(s): {missing}")
+        rows = parsed_upload.rows
         if not rows:
             raise UploadValidationError("No IPDR data rows were found in the uploaded file")
 
@@ -230,6 +235,7 @@ class EvidenceStore:
             completed_at=now_ist(),
             message=self._upload_message(len(sessions), len(quarantine)),
             quarantine_errors=quarantine[:100],
+            format_report=parsed_upload.report,
         )
 
         with self._lock:
@@ -244,6 +250,9 @@ class EvidenceStore:
                     "stored_path": str(stored_path),
                     "valid_rows": len(sessions),
                     "quarantined_rows": len(quarantine),
+                    "parser_engine": parsed_upload.report.parser_engine,
+                    "adapter": parsed_upload.report.adapter,
+                    "file_format": parsed_upload.report.file_format,
                 },
             )
             self._save()
@@ -255,61 +264,6 @@ class EvidenceStore:
         if valid:
             return f"Ingested {valid} rows"
         return f"No valid rows ingested; quarantined {quarantined} rows"
-
-    def _decode_upload(self, content: bytes) -> str:
-        for encoding in ("utf-8-sig", "utf-8", "cp1252"):
-            try:
-                return content.decode(encoding)
-            except UnicodeDecodeError:
-                continue
-        raise UploadValidationError("File encoding is not supported; expected UTF-8 or Windows-1252 text")
-
-    def _parse_rows(self, decoded: str, filename: str) -> list[dict[str, Any]]:
-        stripped = decoded.strip()
-        if not stripped:
-            raise UploadValidationError("Uploaded file contains no readable text")
-        if filename.lower().endswith(".json") or stripped[0] in "[{":
-            return self._parse_json_rows(stripped)
-        sample = stripped[:4096]
-        try:
-            dialect = csv.Sniffer().sniff(sample, delimiters=",|\t;")
-        except csv.Error:
-            dialect = csv.excel
-        reader = csv.DictReader(io.StringIO(stripped), dialect=dialect)
-        if not reader.fieldnames:
-            raise UploadValidationError("Delimited file is missing a header row")
-        self._validate_headers(reader.fieldnames)
-        return [dict(row) for row in reader if any(value for value in row.values() if value is not None)]
-
-    def _parse_json_rows(self, stripped: str) -> list[dict[str, Any]]:
-        try:
-            payload = json.loads(stripped)
-        except json.JSONDecodeError as exc:
-            raise UploadValidationError(f"Invalid JSON upload: {exc.msg}") from exc
-        if isinstance(payload, dict):
-            for key in ("records", "rows", "sessions", "data"):
-                if isinstance(payload.get(key), list):
-                    payload = payload[key]
-                    break
-        if not isinstance(payload, list):
-            raise UploadValidationError("JSON upload must be a list of records or an object containing records/rows/sessions")
-        rows = []
-        for index, item in enumerate(payload, start=1):
-            if not isinstance(item, dict):
-                raise UploadValidationError(f"JSON record {index} is not an object")
-            rows.append(item)
-        if rows:
-            self._validate_headers(rows[0].keys())
-        return rows
-
-    def _validate_headers(self, headers: Any) -> None:
-        normalized = {self._normalize_key(str(header)) for header in headers if header is not None}
-        required = ("msisdn", "destination_ip", "destination_port")
-        for canonical in required:
-            accepted = set(COLUMN_ALIASES[canonical])
-            if not normalized.intersection(accepted):
-                aliases = ", ".join(COLUMN_ALIASES[canonical])
-                raise UploadValidationError(f"Missing required column for {canonical}. Accepted aliases: {aliases}")
 
     def _session_from_row(self, upload_id: str, filename: str, row_number: int, row: dict[str, Any]) -> SessionRecord:
         normalized = {self._normalize_key(str(key)): self._clean_value(value) for key, value in row.items() if key is not None}

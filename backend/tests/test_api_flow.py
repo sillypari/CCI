@@ -23,6 +23,7 @@ def test_upload_extract_and_quarantine_api_flow(tmp_path: Path, monkeypatch) -> 
     assert upload_response.status_code == 200
     upload = upload_response.json()
     assert upload["rows_valid"] == 6
+    assert upload["format_report"]["parser_engine"] == "polars"
 
     sessions = client.get("/api/sessions", params={"msisdn": "919876543210", "classification": "p2p"})
     assert sessions.status_code == 200

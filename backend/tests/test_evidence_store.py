@@ -21,6 +21,11 @@ def test_ingest_valid_ipdr_file_persists_sessions_and_packages(tmp_path: Path) -
     assert upload.rows_total == 6
     assert upload.rows_valid == 6
     assert upload.rows_quarantined == 0
+    assert upload.format_report is not None
+    assert upload.format_report.parser_engine == "polars"
+    assert upload.format_report.file_format == "csv"
+    assert upload.format_report.delimiter == ","
+    assert upload.format_report.adapter == "Generic Canonical"
     assert evidence_store.dashboard_stats().sessions == 6
 
     extraction = evidence_store.create_extraction(ExtractionRequest(msisdn="919876543210"))
@@ -43,6 +48,9 @@ def test_operator_variant_tsv_columns_are_normalized(tmp_path: Path) -> None:
 
     assert upload.status == "completed"
     assert upload.rows_valid == 2
+    assert upload.format_report is not None
+    assert upload.format_report.file_format == "tsv"
+    assert upload.format_report.adapter == "Vodafone Idea"
     assert {session.classification for session in sessions} == {"p2p", "relay"}
 
 
