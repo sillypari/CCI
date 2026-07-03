@@ -1,7 +1,7 @@
 import React from 'react';
 import { MapContainer, TileLayer, CircleMarker, Popup, Circle, useMapEvents } from 'react-leaflet';
 import { useState } from 'react';
-import { MapPin, Search } from 'lucide-react';
+import { MapPin, Search, AlertTriangle } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
 
 // Fix leaflet icon issue in react-leaflet
@@ -43,31 +43,42 @@ export function GeoMap({ locationData }) {
     const [geofenceMode, setGeofenceMode] = useState(false);
     const [geofenceCenter, setGeofenceCenter] = useState(null);
     const [geofenceRadius, setGeofenceRadius] = useState(2000); // 2km default
+    const [mapLimit, setMapLimit] = useState(250); // Default to Top 250 hotspots to prevent lag
     
     if (validLocations.length === 0) {
         return <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>Locations found, but no geographic coordinates (Lat/Lng) available.</div>;
     }
 
+    // Sort locations by session count descending
+    const sortedLocations = React.useMemo(() => {
+        return [...validLocations].sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
+    }, [validLocations]);
+
+    // Limit display locations
+    const displayedLocations = React.useMemo(() => {
+        return mapLimit === 'all' ? sortedLocations : sortedLocations.slice(0, mapLimit);
+    }, [sortedLocations, mapLimit]);
+
     // Default center to Gwalior or first location
-    const center = validLocations.length > 0 
-        ? [validLocations[0].latitude, validLocations[0].longitude] 
+    const center = displayedLocations.length > 0 
+        ? [displayedLocations[0].latitude, displayedLocations[0].longitude] 
         : [26.2183, 78.1828];
 
     // Calculate locations inside geofence
     const pointsInside = geofenceCenter 
-        ? validLocations.filter(loc => getDistance(loc.latitude, loc.longitude, geofenceCenter[0], geofenceCenter[1]) <= geofenceRadius)
-        : validLocations;
+        ? displayedLocations.filter(loc => getDistance(loc.latitude, loc.longitude, geofenceCenter[0], geofenceCenter[1]) <= geofenceRadius)
+        : displayedLocations;
 
     return (
         <div style={{ width: '100%', height: '400px', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border)', marginTop: '20px', gridColumn: 'span 12', position: 'relative' }}>
             <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 1000, background: 'var(--panel-bg)', padding: '10px', borderRadius: '8px', border: '1px solid var(--border)', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer', margin: 0 }}>
                         <input type="checkbox" checked={geofenceMode} onChange={(e) => { setGeofenceMode(e.target.checked); if (!e.target.checked) setGeofenceCenter(null); }} />
                         <strong>Geofence Mode</strong>
                     </label>
                     {geofenceMode && (
-                        <select value={geofenceRadius} onChange={(e) => setGeofenceRadius(Number(e.target.value))} style={{ background: 'var(--bg-main)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px', padding: '2px 4px' }}>
+                        <select value={geofenceRadius} onChange={(e) => setGeofenceRadius(Number(e.target.value))} style={{ background: 'var(--bg-main)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px', padding: '2px 4px', fontSize: '12px' }}>
                             <option value={500}>500m Radius</option>
                             <option value={1000}>1km Radius</option>
                             <option value={2000}>2km Radius</option>
@@ -75,6 +86,17 @@ export function GeoMap({ locationData }) {
                             <option value={10000}>10km Radius</option>
                         </select>
                     )}
+                    
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', borderLeft: '1px solid var(--border)', paddingLeft: '12px' }}>
+                        <strong>Display:</strong>
+                        <select value={mapLimit} onChange={(e) => setMapLimit(e.target.value === 'all' ? 'all' : Number(e.target.value))} style={{ background: 'var(--bg-main)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px', padding: '2px 4px', fontSize: '12px' }}>
+                            <option value={100}>Top 100 Hotspots</option>
+                            <option value={250}>Top 250 Hotspots</option>
+                            <option value={500}>Top 500 Hotspots</option>
+                            <option value={1000}>Top 1000 Hotspots</option>
+                            <option value="all">All ({validLocations.length})</option>
+                        </select>
+                    </div>
                 </div>
                 {geofenceMode && geofenceCenter && (
                     <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--color-warning)' }}>
@@ -84,6 +106,12 @@ export function GeoMap({ locationData }) {
                 )}
                 {geofenceMode && !geofenceCenter && (
                     <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-muted)' }}>Click anywhere on map to drop zone.</div>
+                )}
+                {mapLimit === 'all' && validLocations.length > 500 && (
+                    <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--color-danger)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <AlertTriangle size={12} />
+                        Lag Warning: Rendering {validLocations.length} SVG markers may impact performance.
+                    </div>
                 )}
             </div>
             <MapContainer center={center} zoom={11} style={{ height: '100%', width: '100%' }}>
@@ -95,7 +123,7 @@ export function GeoMap({ locationData }) {
                     url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
                 />
-                {validLocations.map((loc, idx) => {
+                {displayedLocations.map((loc, idx) => {
                     const isDayHeavy = loc.day_sessions > loc.night_sessions;
                     const color = isDayHeavy ? '#FFBB28' : '#0088FE'; // Yellow for day, Blue for night
                     
