@@ -311,6 +311,10 @@ class EvidenceStore:
             self.audit_logs = [AuditLogEntry.model_validate(item) for item in payload.get("audit_logs", [])]
             ranges = payload.get("platform_ranges") or []
             self.platform_ranges = [PlatformRange.model_validate(item) for item in ranges] if ranges else self._default_platform_ranges()
+            # Auto-upgrade legacy databases that only have 1 dummy platform range
+            if len(self.platform_ranges) <= 1:
+                self.platform_ranges = self._default_platform_ranges()
+                self._save()
             
             # Migrate sessions from JSON file to SQLite database if any exist
             json_sessions = payload.get("sessions", [])
@@ -431,21 +435,40 @@ class EvidenceStore:
             )
         ]
     def _default_platform_ranges(self) -> list[PlatformRange]:
-        # Legacy static ranges list (now mostly handled by IPDecoder offline DBs)
+        # Realistic static ranges list for communication and VoIP platforms
         ranges: list[PlatformRange] = []
-        verified_at = now_ist() - timedelta(days=7)
-        # Add a dummy range to keep the UI from being completely empty
-        ranges.append(
-            PlatformRange(
-                id="RNG-001",
-                platform="Meta/WhatsApp",
-                cidr="157.240.0.0/16",
-                asn="AS32934",
-                description="Known Meta infrastructure range",
-                active=True,
-                last_verified=verified_at,
+        verified_at = now_ist()
+        
+        default_data = [
+            ("Meta/WhatsApp", "157.240.0.0/16", "AS32934", "WhatsApp media and messaging relays"),
+            ("Meta/WhatsApp", "31.13.64.0/18", "AS32934", "Meta core content delivery nodes"),
+            ("Meta/WhatsApp", "129.134.0.0/16", "AS32934", "WhatsApp VoIP and registration servers"),
+            ("Telegram Messenger", "149.154.160.0/20", "AS62041", "Telegram application server range"),
+            ("Telegram Messenger", "91.108.4.0/22", "AS59930", "Telegram core data center Europe"),
+            ("Telegram Messenger", "91.108.56.0/22", "AS62041", "Telegram media and storage relays"),
+            ("Telegram Messenger", "91.108.8.0/22", "AS59930", "Telegram core messaging server"),
+            ("Signal Messenger", "205.251.200.0/24", "AS396903", "Quiet Riddle/Signal server nodes"),
+            ("Signal Messenger", "138.197.192.0/20", "AS14061", "Signal application gateway"),
+            ("Apple iMessage/FaceTime", "17.0.0.0/8", "AS714", "Apple Global IP networks"),
+            ("Google Duo/Meet", "172.217.0.0/16", "AS15169", "Google services and video calls"),
+            ("Google Duo/Meet", "142.250.0.0/15", "AS15169", "Google Cloud platform infrastructure"),
+            ("Discord VoIP", "162.159.128.0/20", "AS6432", "Discord VoIP servers & gateways"),
+            ("Microsoft Teams", "52.112.0.0/14", "AS8075", "MS Teams video/audio conference nodes"),
+            ("Microsoft Teams", "52.120.0.0/14", "AS8075", "Skype and Teams enterprise gateway")
+        ]
+        
+        for idx, (platform, cidr, asn, desc) in enumerate(default_data, start=1):
+            ranges.append(
+                PlatformRange(
+                    id=f"RNG-{idx:03d}",
+                    platform=platform,
+                    cidr=cidr,
+                    asn=asn,
+                    description=desc,
+                    active=True,
+                    last_verified=verified_at
+                )
             )
-        )
         return ranges
 
     def dashboard_stats(self) -> DashboardStats:
