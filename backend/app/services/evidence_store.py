@@ -230,11 +230,47 @@ class EvidenceStore:
         self._ensure_dirs()
         self._load()
 
+    def _init_db(self) -> None:
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(self.sqlite_file)
+        try:
+            with connection:
+                connection.execute("PRAGMA journal_mode=WAL")
+                connection.execute("PRAGMA synchronous=NORMAL")
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS sessions ("
+                    "id TEXT PRIMARY KEY, "
+                    "upload_id TEXT, "
+                    "case_id TEXT, "
+                    "a_party_msisdn TEXT, "
+                    "source_ip TEXT, "
+                    "source_port INTEGER, "
+                    "translated_ip TEXT, "
+                    "translated_port INTEGER, "
+                    "destination_ip TEXT, "
+                    "destination_port INTEGER, "
+                    "started_at TEXT, "
+                    "classification TEXT, "
+                    "confidence REAL, "
+                    "source_file TEXT, "
+                    "row_number INTEGER, "
+                    "payload_json TEXT NOT NULL"
+                    ")"
+                )
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_case_id ON sessions (case_id)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_upload_id ON sessions (upload_id)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_msisdn ON sessions (a_party_msisdn)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_dest_ip ON sessions (destination_ip)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_classification ON sessions (classification)")
+        finally:
+            connection.close()
+
     def _ensure_dirs(self) -> None:
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.evidence_dir.mkdir(parents=True, exist_ok=True)
 
     def _load(self) -> None:
+        self._init_db()
         if not self.storage_file.exists():
             self.cases = self._default_cases()
             self.import_specs = self._default_import_specs()
@@ -249,12 +285,59 @@ class EvidenceStore:
             self.jobs = [IngestionJob.model_validate(item) for item in payload.get("jobs", [])]
             snapshot_at = payload.get("last_persistence_snapshot_at")
             self.last_persistence_snapshot_at = datetime.fromisoformat(snapshot_at) if snapshot_at else None
-            self.sessions = [SessionRecord.model_validate(item) for item in payload.get("sessions", [])]
+            
+            # Keep in-memory sessions empty to save memory
+            self.sessions = []
+            
             self.extractions = [ExtractionResult.model_validate(item) for item in payload.get("extractions", [])]
             self.packages = [RequestPackage.model_validate(item) for item in payload.get("packages", [])]
             self.audit_logs = [AuditLogEntry.model_validate(item) for item in payload.get("audit_logs", [])]
             ranges = payload.get("platform_ranges") or []
             self.platform_ranges = [PlatformRange.model_validate(item) for item in ranges] if ranges else self._default_platform_ranges()
+            
+            # Migrate sessions from JSON file to SQLite database if any exist
+            json_sessions = payload.get("sessions", [])
+            if json_sessions:
+                print(f"Migrating {len(json_sessions)} sessions from JSON file to SQLite...")
+                sessions_to_insert = [SessionRecord.model_validate(item) for item in json_sessions]
+                connection = sqlite3.connect(self.sqlite_file)
+                try:
+                    with connection:
+                        connection.execute("PRAGMA journal_mode=WAL")
+                        connection.execute("PRAGMA synchronous=NORMAL")
+                        connection.executemany(
+                            "INSERT OR IGNORE INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            [
+                                (
+                                    item.id,
+                                    item.upload_id,
+                                    item.case_id,
+                                    item.a_party_msisdn,
+                                    item.source_ip,
+                                    item.source_port,
+                                    item.translated_ip,
+                                    item.translated_port,
+                                    item.destination_ip,
+                                    item.destination_port,
+                                    item.started_at.isoformat(),
+                                    item.classification,
+                                    item.confidence,
+                                    item.source_file,
+                                    item.row_number,
+                                    json.dumps(item.model_dump(mode="json"), sort_keys=True)
+                                )
+                                for item in sessions_to_insert
+                            ]
+                        )
+                finally:
+                    connection.close()
+                # Clear sessions in file
+                payload["sessions"] = []
+                # Atomic rewrite
+                tmp_path = self.storage_file.with_suffix(".tmp")
+                tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+                tmp_path.replace(self.storage_file)
+                print("Migration complete, JSON store size minimized.")
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             raise EvidenceStoreError(f"Evidence store is unreadable: {exc}") from exc
 
@@ -267,7 +350,7 @@ class EvidenceStore:
             "uploads": [item.model_dump(mode="json") for item in self.uploads],
             "jobs": [item.model_dump(mode="json") for item in self.jobs],
             "last_persistence_snapshot_at": self.last_persistence_snapshot_at.isoformat() if self.last_persistence_snapshot_at else None,
-            "sessions": [item.model_dump(mode="json") for item in self.sessions],
+            "sessions": [],
             "extractions": [item.model_dump(mode="json") for item in self.extractions],
             "packages": [item.model_dump(mode="json") for item in self.packages],
             "audit_logs": [item.model_dump(mode="json") for item in self.audit_logs],
@@ -349,17 +432,24 @@ class EvidenceStore:
         return ranges
 
     def dashboard_stats(self) -> DashboardStats:
+        connection = sqlite3.connect(self.sqlite_file)
+        try:
+            cursor = connection.cursor()
+            cursor.execute("SELECT count(*), sum(case when classification='p2p' then 1 else 0 end), sum(case when classification='relay' then 1 else 0 end), sum(case when classification='unknown' then 1 else 0 end), avg(confidence) FROM sessions")
+            total_sessions, actionable, relay, unknown, avg_conf = cursor.fetchone()
+        finally:
+            connection.close()
+
         with self._lock:
-            confidences = [session.confidence for session in self.sessions]
             return DashboardStats(
                 cases=len(self.cases),
                 uploads=len(self.uploads),
-                sessions=len(self.sessions),
-                actionable=sum(1 for session in self.sessions if session.classification == "p2p"),
-                relay=sum(1 for session in self.sessions if session.classification == "relay"),
-                unknown=sum(1 for session in self.sessions if session.classification == "unknown"),
+                sessions=total_sessions or 0,
+                actionable=actionable or 0,
+                relay=relay or 0,
+                unknown=unknown or 0,
                 quarantined_rows=sum(upload.rows_quarantined for upload in self.uploads),
-                avg_confidence=round(sum(confidences) / len(confidences), 2) if confidences else 0,
+                avg_confidence=round(avg_conf, 2) if avg_conf is not None else 0,
                 latest_upload=max(self.uploads, key=lambda item: item.created_at) if self.uploads else None,
                 top_crime_types=self._crime_type_counts(),
             )
@@ -676,8 +766,41 @@ class EvidenceStore:
             format_report=report,
         )
 
+        # Ingest sessions into SQLite database in a batch transaction
+        connection = sqlite3.connect(self.sqlite_file)
+        try:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=NORMAL")
+            with connection:
+                connection.executemany(
+                    "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        (
+                            item.id,
+                            item.upload_id,
+                            item.case_id,
+                            item.a_party_msisdn,
+                            item.source_ip,
+                            item.source_port,
+                            item.translated_ip,
+                            item.translated_port,
+                            item.destination_ip,
+                            item.destination_port,
+                            item.started_at.isoformat(),
+                            item.classification,
+                            item.confidence,
+                            item.source_file,
+                            item.row_number,
+                            json.dumps(item.model_dump(mode="json"), sort_keys=True)
+                        )
+                        for item in sessions
+                    ]
+                )
+        finally:
+            connection.close()
+
         with self._lock:
-            self.sessions.extend(sessions)
+            self.sessions = []
             self.uploads.append(upload)
             self._replace_job_unlocked(
                 job.id,
@@ -967,57 +1090,81 @@ class EvidenceStore:
         limit: int = 100,
         offset: int = 0,
     ) -> list[SessionRecord]:
-        with self._lock:
-            sessions = list(self.sessions)
+        query = "SELECT payload_json FROM sessions WHERE 1=1"
+        params = []
+
         if msisdn:
             needle_msisdn = re.sub(r"\D", "", msisdn)
-            sessions = [session for session in sessions if needle_msisdn in session.a_party_msisdn]
+            query += " AND a_party_msisdn LIKE ?"
+            params.append(f"%{needle_msisdn}%")
         if classification:
-            sessions = [session for session in sessions if session.classification == classification]
+            query += " AND classification = ?"
+            params.append(classification)
         if case_id:
-            sessions = [session for session in sessions if session.case_id == case_id]
+            query += " AND case_id = ?"
+            params.append(case_id)
         if destination_ip:
-            sessions = [session for session in sessions if destination_ip in session.destination_ip]
+            query += " AND destination_ip LIKE ?"
+            params.append(f"%{destination_ip}%")
         if imei:
-            sessions = [session for session in sessions if imei in (session.imei or "")]
+            query += " AND json_extract(payload_json, '$.imei') LIKE ?"
+            params.append(f"%{imei}%")
         if app:
-            needle_app = app.lower()
-            sessions = [session for session in sessions if needle_app in session.app_hint.lower() or needle_app in session.operator.lower()]
+            query += " AND (lower(json_extract(payload_json, '$.app_hint')) LIKE ? OR lower(json_extract(payload_json, '$.operator')) LIKE ?)"
+            params.extend([f"%{app.lower()}%", f"%{app.lower()}%"])
         if domain:
-            needle_domain = domain.lower()
-            sessions = [session for session in sessions if needle_domain in (session.domain or "").lower()]
+            query += " AND lower(json_extract(payload_json, '$.domain')) LIKE ?"
+            params.append(f"%{domain.lower()}%")
         if cell_id:
-            needle_cell = cell_id.lower()
-            sessions = [session for session in sessions if needle_cell in (session.cell_id or "").lower()]
+            query += " AND lower(json_extract(payload_json, '$.cell_id')) LIKE ?"
+            params.append(f"%{cell_id.lower()}%")
         if started_from:
-            from_dt = self._parse_timestamp(started_from, 0, required=True, field="started_from")
-            sessions = [session for session in sessions if session.started_at >= from_dt]
+            query += " AND started_at >= ?"
+            params.append(started_from)
         if started_to:
-            to_dt = self._parse_timestamp(started_to, 0, required=True, field="started_to")
-            sessions = [session for session in sessions if session.started_at <= to_dt]
+            query += " AND started_at <= ?"
+            params.append(started_to)
         if q:
-            needle = q.lower()
-            sessions = [
-                session
-                for session in sessions
-                if needle in session.a_party_msisdn.lower()
-                or needle in session.destination_ip.lower()
-                or needle in (session.source_ip or "").lower()
-                or needle in (session.translated_ip or "").lower()
-                or needle in session.operator.lower()
-                or needle in session.app_hint.lower()
-                or needle in (session.domain or "").lower()
-                or needle in (session.cell_id or "").lower()
-                or needle in (session.imei or "").lower()
-                or needle in session.source_file.lower()
-            ]
+            needle = f"%{q.lower()}%"
+            query += (
+                " AND (lower(a_party_msisdn) LIKE ?"
+                " OR lower(destination_ip) LIKE ?"
+                " OR lower(source_ip) LIKE ?"
+                " OR lower(translated_ip) LIKE ?"
+                " OR lower(json_extract(payload_json, '$.operator')) LIKE ?"
+                " OR lower(json_extract(payload_json, '$.app_hint')) LIKE ?"
+                " OR lower(json_extract(payload_json, '$.domain')) LIKE ?"
+                " OR lower(json_extract(payload_json, '$.cell_id')) LIKE ?"
+                " OR lower(json_extract(payload_json, '$.imei')) LIKE ?"
+                " OR lower(source_file) LIKE ?)"
+            )
+            params.extend([needle] * 10)
+
         bounded_limit = max(1, min(limit, 10_000))
         bounded_offset = max(0, offset)
-        return sorted(sessions, key=lambda item: item.started_at, reverse=True)[bounded_offset : bounded_offset + bounded_limit]
+        query += " ORDER BY started_at DESC LIMIT ? OFFSET ?"
+        params.extend([bounded_limit, bounded_offset])
+
+        connection = sqlite3.connect(self.sqlite_file)
+        try:
+            cursor = connection.cursor()
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [SessionRecord.model_validate_json(row[0]) for row in rows]
+        finally:
+            connection.close()
 
     def get_session(self, session_id: str) -> SessionRecord | None:
-        with self._lock:
-            return next((session for session in self.sessions if session.id == session_id), None)
+        connection = sqlite3.connect(self.sqlite_file)
+        try:
+            cursor = connection.cursor()
+            cursor.execute("SELECT payload_json FROM sessions WHERE id = ?", (session_id,))
+            row = cursor.fetchone()
+            if row:
+                return SessionRecord.model_validate_json(row[0])
+            return None
+        finally:
+            connection.close()
 
     def create_extraction(self, request: ExtractionRequest) -> ExtractionResult:
         normalized_msisdn = self._parse_msisdn(request.msisdn, "msisdn")
@@ -1060,7 +1207,7 @@ class EvidenceStore:
         return extraction
 
     def _create_package_unlocked(self, extraction: ExtractionResult, candidate: ExtractionCandidate) -> None:
-        session = next((item for item in self.sessions if item.id == candidate.session_id), None)
+        session = self.get_session(candidate.session_id)
         if session is None:
             return
         package = RequestPackage(
@@ -1236,7 +1383,7 @@ class EvidenceStore:
 
     def suspicious_patterns(self, limit: int = 50) -> list[SuspiciousPattern]:
         with self._lock:
-            sessions = list(self.sessions)
+            sessions = self.list_sessions(limit=20_000)
             uploads = list(self.uploads)
 
         patterns: list[SuspiciousPattern] = []
@@ -1620,23 +1767,32 @@ class EvidenceStore:
         return output.getvalue()
 
     def persistence_status(self) -> PersistenceStatus:
-        return PersistenceStatus(
-            backend="sqlite_snapshot",
-            enabled=True,
-            path=str(self.sqlite_file),
-            cases=len(self.cases),
-            uploads=len(self.uploads),
-            sessions=len(self.sessions),
-            reports=len(self.extractions) + len(self.packages),
-            last_snapshot_at=self.last_persistence_snapshot_at,
-        )
+        connection = sqlite3.connect(self.sqlite_file)
+        try:
+            cursor = connection.cursor()
+            cursor.execute("SELECT count(*) FROM sessions")
+            total_sessions = cursor.fetchone()[0]
+        finally:
+            connection.close()
+
+        with self._lock:
+            return PersistenceStatus(
+                backend="sqlite_snapshot",
+                enabled=True,
+                path=str(self.sqlite_file),
+                cases=len(self.cases),
+                uploads=len(self.uploads),
+                sessions=total_sessions or 0,
+                reports=len(self.extractions) + len(self.packages),
+                last_snapshot_at=self.last_persistence_snapshot_at,
+            )
 
     def write_sqlite_snapshot(self) -> PersistenceStatus:
         with self._lock:
             cases = list(self.cases)
             uploads = list(self.uploads)
             jobs = list(self.jobs)
-            sessions = list(self.sessions)
+            sessions = self.list_sessions(limit=20_000)
             extractions = list(self.extractions)
             packages = list(self.packages)
             audit_logs = list(self.audit_logs)
@@ -1865,7 +2021,7 @@ class EvidenceStore:
             return []
         results: list[SearchResult] = []
         with self._lock:
-            sessions = list(self.sessions)
+            sessions = self.list_sessions(limit=20_000)
             uploads = list(self.uploads)
             packages = list(self.packages)
         for session in sessions:

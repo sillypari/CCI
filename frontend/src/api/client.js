@@ -33,6 +33,49 @@ async function request(path, options = {}) {
   return payload;
 }
 
+function requestWithProgress(path, body, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const startTime = Date.now();
+
+    xhr.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable) {
+        const percent = Math.round((event.loaded / event.total) * 100);
+        const elapsedTime = (Date.now() - startTime) / 1000;
+        const speed = elapsedTime > 0 ? event.loaded / elapsedTime : 0;
+        onProgress({ percent, speed, loaded: event.loaded, total: event.total });
+      }
+    });
+
+    xhr.addEventListener("load", () => {
+      const contentType = xhr.getResponseHeader("content-type") ?? "";
+      let payload;
+      try {
+        payload = contentType.includes("application/json") ? JSON.parse(xhr.responseText) : xhr.responseText;
+      } catch (e) {
+        payload = xhr.responseText;
+      }
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload);
+      } else {
+        const detail = typeof payload === "object" && payload !== null ? payload.detail : payload;
+        const message = Array.isArray(detail)
+          ? detail.map((item) => item.msg ?? JSON.stringify(item)).join("; ")
+          : detail || xhr.statusText || "Request failed";
+        reject(new ApiError(message, { status: xhr.status, details: payload }));
+      }
+    });
+
+    xhr.addEventListener("error", () => {
+      reject(new ApiError("Backend is unreachable. Confirm the API service is running."));
+    });
+
+    xhr.open("POST", `${API_URL}${path}`);
+    xhr.send(body);
+  });
+}
+
 export const api = {
   dashboard: () => request("/dashboard/stats"),
   uploads: () => request("/uploads"),
@@ -91,12 +134,18 @@ export const api = {
     body.append("file", file);
     if (options.caseId) body.append("case_id", options.caseId);
     if (options.importSpecId) body.append("import_spec_id", options.importSpecId);
+    if (options.onProgress) {
+      return requestWithProgress("/uploads", body, options.onProgress);
+    }
     return request("/uploads", { method: "POST", body });
   },
   validateUpload: (file, options = {}) => {
     const body = new FormData();
     body.append("file", file);
     if (options.importSpecId) body.append("import_spec_id", options.importSpecId);
+    if (options.onProgress) {
+      return requestWithProgress("/uploads/validate", body, options.onProgress);
+    }
     return request("/uploads/validate", { method: "POST", body });
   },
   autoSuggestMapping: (file) => {

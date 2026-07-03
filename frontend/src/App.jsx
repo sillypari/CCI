@@ -588,9 +588,12 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
   const [selectedQuarantine, setSelectedQuarantine] = useState(null);
   const [validationReport, setValidationReport] = useState(null);
   const [validating, setValidating] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState({ percent: 0, speed: 0, loaded: 0, total: 0, phase: "" });
   const fileInputId = useId();
   const [caseId, setCaseId] = useState("CASE-GENERAL");
   const [importSpecId, setImportSpecId] = useState("");
+
   const caseOptions = useMemo(
     () => (cases.length ? cases : [{ id: "CASE-GENERAL", name: "General Evidence Intake" }]).map((item) => ({ value: item.id, label: item.name })),
     [cases]
@@ -605,6 +608,14 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
       setCaseId(caseOptions[0]?.value ?? "CASE-GENERAL");
     }
   }, [caseId, caseOptions]);
+
+  const formatSpeed = (bytesPerSec) => {
+    if (!bytesPerSec || bytesPerSec === Infinity) return "0 B/s";
+    const k = 1024;
+    const sizes = ["B/s", "KB/s", "MB/s", "GB/s"];
+    const i = Math.floor(Math.log(bytesPerSec) / Math.log(k));
+    return parseFloat((bytesPerSec / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+  };
 
   const setFile = (file) => {
     if (file && file.size > 50 * 1024 * 1024) {
@@ -626,17 +637,30 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
   const runValidation = async () => {
     if (!activeFile || !validateFile) return;
     setValidating(true);
+    setProgress({ percent: 0, speed: 0, loaded: 0, total: activeFile.size, phase: "validating" });
     try {
-      setValidationReport(await validateFile(activeFile, { importSpecId }));
+      setValidationReport(await validateFile(activeFile, { 
+        importSpecId,
+        onProgress: (p) => setProgress({ percent: p.percent, speed: p.speed, loaded: p.loaded, total: p.total, phase: "validating" })
+      }));
     } finally {
       setValidating(false);
+      setProgress({ percent: 0, speed: 0, loaded: 0, total: 0, phase: "" });
     }
   };
 
   const submitUpload = async (event) => {
     event.preventDefault();
     if (activeFile) {
-      const uploaded = await uploadFile(activeFile, { caseId, importSpecId });
+      setUploading(true);
+      setProgress({ percent: 0, speed: 0, loaded: 0, total: activeFile.size, phase: "uploading" });
+      const uploaded = await uploadFile(activeFile, { 
+        caseId, 
+        importSpecId,
+        onProgress: (p) => setProgress({ percent: p.percent, speed: p.speed, loaded: p.loaded, total: p.total, phase: "uploading" })
+      });
+      setUploading(false);
+      setProgress({ percent: 0, speed: 0, loaded: 0, total: 0, phase: "" });
       if (uploaded) {
         setFile(null);
         event.currentTarget.reset();
@@ -664,21 +688,29 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
             type="file"
             accept=".csv,.txt,.tsv,.json,.xlsx,.xls,.zip"
             onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+            disabled={validating || uploading}
           />
           <label
-            className={`upload-drop__surface ${activeFile ? "has-file" : ""} ${isDragging ? "is-dragging" : ""} ${validating ? "is-validating" : ""}`}
+            className={`upload-drop__surface ${activeFile ? "has-file" : ""} ${isDragging ? "is-dragging" : ""} ${validating || uploading ? "is-validating" : ""}`}
             htmlFor={fileInputId}
-            onDragEnter={() => !validating && setIsDragging(true)}
+            onDragEnter={() => !(validating || uploading) && setIsDragging(true)}
             onDragLeave={() => setIsDragging(false)}
             onDragOver={(event) => event.preventDefault()}
             onDrop={handleDrop}
-            style={validating ? { pointerEvents: "none", opacity: 0.7 } : {}}
+            style={validating || uploading ? { pointerEvents: "none", opacity: 0.7 } : {}}
           >
-            {validating ? (
+            {validating || uploading ? (
               <>
                 <span className="upload-drop__icon animate-spin"><Loader2 size={34} style={{ color: "var(--color-brand)" }} /></span>
-                <strong>Validating file format...</strong>
-                <span>Parsing schema, checking delimiters and checking for column matches...</span>
+                <strong>{progress.phase === "validating" ? "Validating file format..." : "Uploading file to server..."}</strong>
+                <span className="mono" style={{ fontSize: "14px", color: "var(--color-brand)", fontWeight: "bold", margin: "6px 0" }}>
+                  {progress.percent}% ({formatSpeed(progress.speed)})
+                </span>
+                <span>
+                  {progress.percent < 100 
+                    ? `Transferring bytes (${number(progress.loaded)} / ${number(progress.total)})...` 
+                    : progress.phase === "validating" ? "Processing validation checks on server..." : "Initializing server-side row parsing..."}
+                </span>
               </>
             ) : (
               <>
@@ -692,11 +724,11 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
           <div className="form-grid compact">
             <div className="field">
               <span>Case</span>
-              <SelectControl ariaLabel="Case" value={caseId} onChange={setCaseId} options={caseOptions} />
+              <SelectControl ariaLabel="Case" value={caseId} onChange={setCaseId} options={caseOptions} disabled={validating || uploading} />
             </div>
             <div className="field">
               <span>Import spec</span>
-              <SelectControl ariaLabel="Import specification" value={importSpecId} onChange={setImportSpecId} options={specOptions} />
+              <SelectControl ariaLabel="Import specification" value={importSpecId} onChange={setImportSpecId} options={specOptions} disabled={validating || uploading} />
             </div>
           </div>
           {validationReport ? <ValidationReportCard report={validationReport} /> : null}
@@ -705,14 +737,14 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
               type="button" 
               icon={validating ? Loader2 : CheckCircle2} 
               variant="secondary" 
-              disabled={!activeFile || validating} 
+              disabled={!activeFile || validating || uploading} 
               onClick={runValidation}
               iconClassName={validating ? "animate-spin" : ""}
             >
               {validating ? "Validating..." : "Validate format"}
             </Button>
-            <Button icon={Upload} disabled={!activeFile || validating}>
-              Process file
+            <Button icon={uploading ? Loader2 : Upload} disabled={!activeFile || validating || uploading} iconClassName={uploading ? "animate-spin" : ""}>
+              {uploading ? "Uploading..." : "Process file"}
             </Button>
           </div>
         </form>
@@ -734,7 +766,14 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
               {uploads.length ? uploads.map((upload) => (
                 <tr key={upload.id}>
                   <td>{upload.filename}</td>
-                  <td><Badge tone={upload.status === "completed" ? "success" : upload.status === "failed" ? "danger" : "warning"}>{upload.status}</Badge></td>
+                  <td>
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                      <Badge tone={upload.status === "completed" ? "success" : upload.status === "failed" ? "danger" : "warning"}>{upload.status}</Badge>
+                      {(upload.status === "processing" || upload.status === "pending") && (
+                        <Loader2 size={14} className="animate-spin" style={{ color: "var(--color-brand)" }} />
+                      )}
+                    </div>
+                  </td>
                   <td>
                     <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                       <span>{number(upload.rows_valid)} / {number(upload.rows_total)}</span>
@@ -774,19 +813,59 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
         <div className="queue-ledger">
           <h3>Ingestion Jobs</h3>
           <div className="job-list">
-            {jobs.length ? jobs.slice(0, 5).map((job) => (
-              <article className="job-row" key={job.id}>
-                <div>
-                  <strong>{job.filename}</strong>
-                  <span>{job.message ?? job.id}</span>
-                </div>
-                <Badge tone={job.status === "completed" ? "success" : job.status === "failed" ? "danger" : "warning"}>{job.progress}%</Badge>
-              </article>
-            )) : <EmptyState label="No ingestion jobs recorded" />}
+            {jobs.length ? jobs.slice(0, 5).map((job) => {
+              const isWorking = job.status === "processing" || job.status === "pending";
+              
+              // Calculate elapsed time and rows/sec speed
+              const elapsedSec = (Date.now() - new Date(job.created_at).getTime()) / 1000;
+              const rowsProcessed = Math.round((job.progress / 100) * job.rows_total);
+              const speedRowsPerSec = elapsedSec > 0.5 ? Math.round(rowsProcessed / elapsedSec) : 0;
+              
+              let speedMessage = "";
+              if (isWorking) {
+                speedMessage = speedRowsPerSec > 0 ? `Ingesting: ${number(speedRowsPerSec)} rows/s` : "Starting...";
+              } else if (job.status === "completed") {
+                speedMessage = `Completed (${number(job.rows_valid)} rows)`;
+              } else {
+                speedMessage = `Failed (${job.message || "Unknown error"})`;
+              }
+              
+              return (
+                <article className="job-row" key={job.id} style={{ display: "grid", gap: "8px", padding: "10px 12px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", gap: "12px" }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <strong style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{job.filename}</strong>
+                      <span style={{ display: "block", fontSize: "11px", color: "var(--color-text-secondary)", marginTop: "2px" }}>
+                        {speedMessage}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center", flexShrink: 0 }}>
+                      {isWorking && (
+                        <Loader2 size={14} className="animate-spin" style={{ color: "var(--color-brand)" }} />
+                      )}
+                      <Badge tone={job.status === "completed" ? "success" : job.status === "failed" ? "danger" : "warning"}>
+                        {job.progress}%
+                      </Badge>
+                    </div>
+                  </div>
+                  <div style={{ width: "100%", height: "4px", background: "var(--color-border-subtle)", borderRadius: "2px", overflow: "hidden" }}>
+                    <div 
+                      style={{ 
+                        width: `${job.progress}%`, 
+                        height: "100%", 
+                        background: job.status === "failed" ? "var(--color-danger)" : "var(--color-brand)", 
+                        transition: "width 0.3s ease",
+                        borderRadius: "2px"
+                      }} 
+                    />
+                  </div>
+                </article>
+              );
+            }) : <EmptyState label="No ingestion jobs recorded" />}
           </div>
         </div>
       </section>
-          {selectedQuarantine ? (
+      {selectedQuarantine ? (
         <Modal title="Quarantine Review" onClose={() => setSelectedQuarantine(null)}>
           <div className="table-wrap">
             <table>
@@ -810,7 +889,7 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
           </div>
         </Modal>
       ) : null}
-</motion.section>
+    </motion.section>
   );
 }
 
