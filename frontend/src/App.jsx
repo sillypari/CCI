@@ -95,6 +95,7 @@ const initialState = {
   cases: [],
   importSpecs: [],
   uploads: [],
+  jobs: [],
   sessions: [],
   graph: emptyGraphData,
   patterns: [],
@@ -103,7 +104,8 @@ const initialState = {
   auditLogs: [],
   platformRanges: [],
   timeline: [],
-  applications: []
+  applications: [],
+  persistence: null
 };
 
 function App() {
@@ -122,11 +124,12 @@ function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const [stats, cases, importSpecs, uploads, sessions, graph, patterns, timeline, applications, extractions, packagesList, auditLogs, platformRanges] = await Promise.all([
+      const [stats, cases, importSpecs, uploads, jobs, sessions, graph, patterns, timeline, applications, extractions, packagesList, auditLogs, platformRanges, persistence] = await Promise.all([
         api.dashboard(),
         api.cases(),
         api.importSpecs(),
         api.uploads(),
+        api.uploadJobs(),
         api.sessions(),
         api.graph(),
         api.patterns(),
@@ -135,9 +138,10 @@ function App() {
         api.extractions(),
         api.packages(),
         api.auditLogs(),
-        api.platformRanges()
+        api.platformRanges(),
+        api.persistenceStatus()
       ]);
-      setData({ stats, cases, importSpecs, uploads, sessions, graph: normalizeGraphResponse(graph), patterns, timeline, applications, extractions, packages: packagesList, auditLogs, platformRanges });
+      setData({ stats, cases, importSpecs, uploads, jobs, sessions, graph: normalizeGraphResponse(graph), patterns, timeline, applications, extractions, packages: packagesList, auditLogs, platformRanges, persistence });
       setApiLive(true);
       setApiError("");
     } catch (error) {
@@ -162,6 +166,38 @@ function App() {
         setApiError(error.message);
         pushToast("error", "Upload failed", error.message);
         return false;
+      }
+    },
+    [pushToast, refresh]
+  );
+
+  const validateFile = useCallback(
+    async (file, options = {}) => {
+      try {
+        const report = await api.validateUpload(file, options);
+        const missing = report.missing_required?.length ? `Missing ${report.missing_required.join(", ")}` : "Required fields detected";
+        pushToast(report.missing_required?.length ? "warning" : "success", "Validation complete", `${report.adapter} | ${missing}`);
+        return report;
+      } catch (error) {
+        setApiLive(false);
+        setApiError(error.message);
+        pushToast("error", "Validation failed", error.message);
+        return null;
+      }
+    },
+    [pushToast]
+  );
+
+  const createPersistenceSnapshot = useCallback(
+    async () => {
+      try {
+        const status = await api.createPersistenceSnapshot();
+        await refresh();
+        pushToast("success", "SQLite snapshot updated", `${status.sessions} sessions persisted`);
+        return status;
+      } catch (error) {
+        pushToast("error", "Snapshot failed", error.message);
+        return null;
       }
     },
     [pushToast, refresh]
@@ -228,7 +264,7 @@ function App() {
           <Routes>
             <Route path="/" element={<DashboardPage data={data} />} />
             <Route path="/cases" element={<CasesPage cases={data.cases} stats={data.stats} createCase={createCase} />} />
-            <Route path="/uploads" element={<UploadsPage uploads={data.uploads} cases={data.cases} importSpecs={data.importSpecs} uploadFile={uploadFile} />} />
+            <Route path="/uploads" element={<UploadsPage uploads={data.uploads} jobs={data.jobs} cases={data.cases} importSpecs={data.importSpecs} uploadFile={uploadFile} validateFile={validateFile} />} />
             <Route path="/sessions" element={<SessionsPage sessions={data.sessions} />} />
             <Route path="/extractions" element={<ExtractionsPage extractions={data.extractions} runExtraction={runExtraction} />} />
             <Route path="/map" element={<MapPage initialGraph={data.graph} runExtraction={runExtraction} />} />
@@ -236,7 +272,7 @@ function App() {
             <Route path="/reports" element={<ReportsPage sessions={data.sessions} />} />
             <Route path="/packages" element={<PackagesPage packagesList={data.packages} />} />
             <Route path="/audit" element={<AuditPage auditLogs={data.auditLogs} />} />
-            <Route path="/settings" element={<SettingsPage ranges={data.platformRanges} stats={data.stats} apiLive={apiLive} importSpecs={data.importSpecs} createImportSpec={createImportSpec} />} />
+            <Route path="/settings" element={<SettingsPage ranges={data.platformRanges} stats={data.stats} apiLive={apiLive} persistence={data.persistence} importSpecs={data.importSpecs} createImportSpec={createImportSpec} createPersistenceSnapshot={createPersistenceSnapshot} />} />
           </Routes>
         </AnimatePresence>
       </Shell>
@@ -478,9 +514,11 @@ function CasesPage({ cases, stats, createCase }) {
     </motion.section>
   );
 }
-function UploadsPage({ uploads, cases = [], importSpecs = [], uploadFile }) {
+function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadFile, validateFile }) {
   const [activeFile, setActiveFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [validationReport, setValidationReport] = useState(null);
+  const [validating, setValidating] = useState(false);
   const fileInputId = useId();
   const [caseId, setCaseId] = useState("CASE-GENERAL");
   const [importSpecId, setImportSpecId] = useState("");
@@ -499,12 +537,27 @@ function UploadsPage({ uploads, cases = [], importSpecs = [], uploadFile }) {
     }
   }, [caseId, caseOptions]);
 
+  const setFile = (file) => {
+    setActiveFile(file);
+    setValidationReport(null);
+  };
+
+  const runValidation = async () => {
+    if (!activeFile || !validateFile) return;
+    setValidating(true);
+    try {
+      setValidationReport(await validateFile(activeFile, { importSpecId }));
+    } finally {
+      setValidating(false);
+    }
+  };
+
   const submitUpload = async (event) => {
     event.preventDefault();
     if (activeFile) {
       const uploaded = await uploadFile(activeFile, { caseId, importSpecId });
       if (uploaded) {
-        setActiveFile(null);
+        setFile(null);
         event.currentTarget.reset();
       }
     }
@@ -515,7 +568,7 @@ function UploadsPage({ uploads, cases = [], importSpecs = [], uploadFile }) {
     setIsDragging(false);
     const [file] = event.dataTransfer.files;
     if (file) {
-      setActiveFile(file);
+      setFile(file);
     }
   };
 
@@ -528,8 +581,8 @@ function UploadsPage({ uploads, cases = [], importSpecs = [], uploadFile }) {
             id={fileInputId}
             className="upload-drop__input"
             type="file"
-            accept=".csv,.txt,.tsv,.json,.xlsx,.xls"
-            onChange={(event) => setActiveFile(event.target.files?.[0] ?? null)}
+            accept=".csv,.txt,.tsv,.json,.xlsx,.xls,.zip"
+            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
           />
           <label
             className={`upload-drop__surface ${activeFile ? "has-file" : ""} ${isDragging ? "is-dragging" : ""}`}
@@ -541,7 +594,7 @@ function UploadsPage({ uploads, cases = [], importSpecs = [], uploadFile }) {
           >
             <span className="upload-drop__icon"><FileJson size={34} /></span>
             <strong>{activeFile ? activeFile.name : "Select IPDR evidence file"}</strong>
-            <span>{activeFile ? `${number(activeFile.size)} bytes ready for parsing` : "CSV, TSV, TXT, JSON, XLSX"}</span>
+            <span>{activeFile ? `${number(activeFile.size)} bytes ready for validation` : "CSV, TSV, TXT, JSON, XLSX, ZIP batch"}</span>
             <span className="upload-drop__action">{activeFile ? "Change file" : "Browse file"}</span>
           </label>
           <div className="form-grid compact">
@@ -554,9 +607,15 @@ function UploadsPage({ uploads, cases = [], importSpecs = [], uploadFile }) {
               <SelectControl ariaLabel="Import specification" value={importSpecId} onChange={setImportSpecId} options={specOptions} />
             </div>
           </div>
-          <Button icon={Upload} disabled={!activeFile}>
-            Process file
-          </Button>
+          {validationReport ? <ValidationReportCard report={validationReport} /> : null}
+          <div className="button-row">
+            <Button type="button" icon={CheckCircle2} variant="secondary" disabled={!activeFile || validating} onClick={runValidation}>
+              {validating ? "Validating" : "Validate format"}
+            </Button>
+            <Button icon={Upload} disabled={!activeFile}>
+              Process file
+            </Button>
+          </div>
         </form>
       </section>
       <section className="panel span-7">
@@ -587,11 +646,39 @@ function UploadsPage({ uploads, cases = [], importSpecs = [], uploadFile }) {
             </tbody>
           </table>
         </div>
+        <div className="queue-ledger">
+          <h3>Ingestion Jobs</h3>
+          <div className="job-list">
+            {jobs.length ? jobs.slice(0, 5).map((job) => (
+              <article className="job-row" key={job.id}>
+                <div>
+                  <strong>{job.filename}</strong>
+                  <span>{job.message ?? job.id}</span>
+                </div>
+                <Badge tone={job.status === "completed" ? "success" : job.status === "failed" ? "danger" : "warning"}>{job.progress}%</Badge>
+              </article>
+            )) : <EmptyState label="No ingestion jobs recorded" />}
+          </div>
+        </div>
       </section>
     </motion.section>
   );
 }
 
+function ValidationReportCard({ report }) {
+  const ok = !report.missing_required?.length;
+  return (
+    <div className={`validation-card ${ok ? "is-ok" : "is-warning"}`}>
+      <div>
+        <strong>{report.adapter}</strong>
+        <span>{report.file_format.toUpperCase()} | {number(report.rows_detected)} rows | {Math.round(report.confidence * 100)}% confidence</span>
+      </div>
+      <Badge tone={ok ? "success" : "warning"}>{ok ? "Ready" : "Needs mapping"}</Badge>
+      {report.missing_required?.length ? <p>Missing: {report.missing_required.join(", ")}</p> : null}
+      {report.archive_members?.length ? <p>{report.archive_members.length} archive member{report.archive_members.length === 1 ? "" : "s"} detected</p> : null}
+    </div>
+  );
+}
 function SessionsPage({ sessions }) {
   const [params] = useSearchParams();
   const [query, setQuery] = useState(params.get("q") ?? "");
@@ -698,6 +785,15 @@ function MapPage({ initialGraph, runExtraction }) {
   const [graphBusy, setGraphBusy] = useState(false);
   const [graphError, setGraphError] = useState("");
   const deferredMsisdn = useDeferredValue(msisdn);
+  const exportQuery = useMemo(() => {
+    const params = new URLSearchParams();
+    const trimmedMsisdn = msisdn.trim();
+    if (trimmedMsisdn) params.set("msisdn", trimmedMsisdn);
+    if (classification !== "all") params.set("classification", classification);
+    params.set("limit", "5000");
+    const query = params.toString();
+    return query ? `?${query}` : "";
+  }, [classification, msisdn]);
 
   useEffect(() => {
     setGraphData(normalizeGraphResponse(initialGraph));
@@ -754,6 +850,8 @@ function MapPage({ initialGraph, runExtraction }) {
                   { value: "unknown", label: "Unknown" }
                 ]}
               />
+              <a className="button secondary button-link" href={api.graphJsonUrl(exportQuery)} download><Download size={16} /><span>JSON</span></a>
+              <a className="button secondary button-link" href={api.graphGraphmlUrl(exportQuery)} download><Network size={16} /><span>GraphML</span></a>
               <Button type="button" icon={Target} disabled={!msisdn.trim()} onClick={() => runExtraction({ msisdn, depth: 1, min_confidence: 0.65 })}>Extract</Button>
             </div>
           }
@@ -956,7 +1054,13 @@ function ReportPreview({ report }) {
   if (report.type === "ip") {
     return (
       <div className="report-card">
-        <h3>{payload.destination_ip}</h3>
+        <div className="report-card__head">
+          <h3>{payload.destination_ip}</h3>
+          <div className="report-export-actions">
+            <a className="button secondary button-link" href={api.ipCsvUrl(payload.destination_ip)} download><Download size={16} /><span>CSV</span></a>
+            <a className="button secondary button-link" href={api.ipHtmlUrl(payload.destination_ip)} download><FileText size={16} /><span>HTML</span></a>
+          </div>
+        </div>
         <div className="metric-row"><span>Sessions <strong>{payload.total_sessions}</strong></span><span>MSISDNs <strong>{payload.msisdns.length}</strong></span><span>Ports <strong>{payload.ports.join(", ") || "-"}</strong></span></div>
         <p>{payload.operator} | {payload.classification} | {number(payload.total_bytes)} bytes</p>
       </div>
@@ -964,7 +1068,13 @@ function ReportPreview({ report }) {
   }
   return (
     <div className="report-card">
-      <h3>{payload.msisdn}</h3>
+      <div className="report-card__head">
+        <h3>{payload.msisdn}</h3>
+        <div className="report-export-actions">
+          <a className="button secondary button-link" href={api.poiCsvUrl(payload.msisdn)} download><Download size={16} /><span>CSV</span></a>
+          <a className="button secondary button-link" href={api.poiHtmlUrl(payload.msisdn)} download><FileText size={16} /><span>HTML</span></a>
+        </div>
+      </div>
       <div className="metric-row"><span>Sessions <strong>{payload.total_sessions}</strong></span><span>P2P <strong>{payload.p2p}</strong></span><span>Relay <strong>{payload.relay}</strong></span></div>
       <p>{number(payload.total_bytes)} bytes | IMEI {payload.imeis.join(", ") || "-"}</p>
       <div className="table-wrap">
@@ -1070,7 +1180,7 @@ function AuditPage({ auditLogs }) {
   );
 }
 
-function SettingsPage({ ranges, stats, apiLive, importSpecs = [], createImportSpec }) {
+function SettingsPage({ ranges, stats, apiLive, persistence, importSpecs = [], createImportSpec, createPersistenceSnapshot }) {
   const [tab, setTab] = useState("ranges");
   return (
     <motion.section {...pageMotion} className="page-grid">
@@ -1089,7 +1199,7 @@ function SettingsPage({ ranges, stats, apiLive, importSpecs = [], createImportSp
         {tab === "ranges" ? <RangesTable ranges={ranges} /> : null}
         {tab === "adapters" ? <AdaptersPanel /> : null}
         {tab === "import" ? <ImportSpecsPanel importSpecs={importSpecs} createImportSpec={createImportSpec} /> : null}
-        {tab === "system" ? <SystemPanel stats={stats} apiLive={apiLive} /> : null}
+        {tab === "system" ? <SystemPanel stats={stats} apiLive={apiLive} persistence={persistence} createPersistenceSnapshot={createPersistenceSnapshot} /> : null}
       </section>
     </motion.section>
   );
@@ -1815,12 +1925,37 @@ function AdaptersPanel() {
   );
 }
 
-function SystemPanel({ stats, apiLive }) {
+function SystemPanel({ stats, apiLive, persistence, createPersistenceSnapshot }) {
+  const [busy, setBusy] = useState(false);
+  const snapshot = async () => {
+    if (!createPersistenceSnapshot) return;
+    setBusy(true);
+    try {
+      await createPersistenceSnapshot();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <div className="system-grid">
-      <StatCard icon={Server} label="API" value={apiLive ? "Live" : "Offline"} tone={apiLive ? "success" : "danger"} />
-      <StatCard icon={Database} label="Rows" value={number(stats.sessions)} tone="brand" />
-      <StatCard icon={AlertTriangle} label="Quarantine" value={number(stats.quarantined_rows)} tone="danger" />
+    <div className="system-stack">
+      <div className="system-grid">
+        <StatCard icon={Server} label="API" value={apiLive ? "Live" : "Offline"} tone={apiLive ? "success" : "danger"} />
+        <StatCard icon={Database} label="Rows" value={number(stats.sessions)} tone="brand" />
+        <StatCard icon={AlertTriangle} label="Quarantine" value={number(stats.quarantined_rows)} tone="danger" />
+      </div>
+      <article className="persistence-card">
+        <div>
+          <span>Evidence database</span>
+          <strong>{persistence?.backend ?? "sqlite_snapshot"}</strong>
+          <p className="mono">{persistence?.path ?? "Snapshot path unavailable"}</p>
+        </div>
+        <div className="persistence-card__meta">
+          <Badge tone={persistence?.enabled ? "success" : "warning"}>{persistence?.enabled ? "Enabled" : "Pending"}</Badge>
+          <span>{persistence?.last_snapshot_at ? `Last ${date(persistence.last_snapshot_at)}` : "No snapshot yet"}</span>
+          <Button type="button" icon={Database} variant="secondary" onClick={snapshot} disabled={busy}>{busy ? "Writing" : "Write snapshot"}</Button>
+        </div>
+      </article>
     </div>
   );
 }

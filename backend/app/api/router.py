@@ -2,6 +2,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Response, Uploa
 
 from app.config import get_settings
 from app.schemas.core import (
+    AdapterValidationReport,
     ApplicationSummary,
     AuditLogEntry,
     CaseCreate,
@@ -13,9 +14,11 @@ from app.schemas.core import (
     ExtractionResult,
     ImportSpecCreate,
     ImportSpecification,
+    IngestionJob,
     ImeiFrequencyReport,
     IpSummaryReport,
     LocationSummaryReport,
+    PersistenceStatus,
     PlatformRange,
     PoiSummaryReport,
     QuarantineRecord,
@@ -85,6 +88,33 @@ async def upload_file(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     except EvidenceStoreError as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+
+@api_router.get("/uploads/jobs", response_model=list[IngestionJob], tags=["uploads"])
+async def list_ingestion_jobs() -> list[IngestionJob]:
+    return store.list_jobs()
+
+
+@api_router.get("/uploads/jobs/{job_id}", response_model=IngestionJob, tags=["uploads"])
+async def ingestion_job(job_id: str) -> IngestionJob:
+    job = store.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ingestion job not found")
+    return job
+
+
+@api_router.post("/uploads/validate", response_model=AdapterValidationReport, tags=["uploads"])
+async def validate_upload_file(
+    file: UploadFile = File(...),
+    import_spec_id: str | None = Form(default=None),
+) -> AdapterValidationReport:
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
+    try:
+        return store.validate_upload(file.filename or "ipdr_upload.csv", content, import_spec_id=import_spec_id)
+    except UploadValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
 
 @api_router.get("/uploads/{upload_id}/status", response_model=UploadStatus, tags=["uploads"])
@@ -165,6 +195,34 @@ async def communication_graph(
     return store.communication_graph(msisdn=msisdn, classification=classification, case_id=case_id, limit=limit)
 
 
+@api_router.get("/graph/export.json", tags=["graph"])
+async def export_graph_json(
+    msisdn: str | None = None,
+    case_id: str | None = None,
+    classification: str | None = Query(default=None, pattern="^(p2p|relay|unknown)$"),
+    limit: int = Query(default=5_000, ge=1, le=20_000),
+) -> Response:
+    return Response(
+        content=store.export_graph_json(msisdn=msisdn, classification=classification, case_id=case_id, limit=limit),
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=pramaan-ipdr-graph.json"},
+    )
+
+
+@api_router.get("/graph/export.graphml", tags=["graph"])
+async def export_graph_graphml(
+    msisdn: str | None = None,
+    case_id: str | None = None,
+    classification: str | None = Query(default=None, pattern="^(p2p|relay|unknown)$"),
+    limit: int = Query(default=5_000, ge=1, le=20_000),
+) -> Response:
+    return Response(
+        content=store.export_graph_graphml(msisdn=msisdn, classification=classification, case_id=case_id, limit=limit),
+        media_type="application/graphml+xml",
+        headers={"Content-Disposition": "attachment; filename=pramaan-ipdr-graph.graphml"},
+    )
+
+
 @api_router.get("/analytics/patterns", response_model=list[SuspiciousPattern], tags=["analytics"])
 async def suspicious_patterns(limit: int = Query(default=50, ge=1, le=100)) -> list[SuspiciousPattern]:
     return store.suspicious_patterns(limit=limit)
@@ -182,6 +240,42 @@ async def timeline(
 @api_router.get("/analytics/applications", response_model=list[ApplicationSummary], tags=["analytics"])
 async def application_summary(case_id: str | None = None, limit: int = Query(default=10, ge=1, le=100)) -> list[ApplicationSummary]:
     return store.application_summary(case_id=case_id, limit=limit)
+
+
+@api_router.get("/reports/poi/{msisdn}.csv", tags=["reports"])
+async def export_poi_csv(msisdn: str, case_id: str | None = None) -> Response:
+    return Response(
+        content=store.export_poi_csv(msisdn=msisdn, case_id=case_id),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=poi-{msisdn}.csv"},
+    )
+
+
+@api_router.get("/reports/poi/{msisdn}.html", tags=["reports"])
+async def export_poi_html(msisdn: str, case_id: str | None = None) -> Response:
+    return Response(
+        content=store.export_poi_html(msisdn=msisdn, case_id=case_id),
+        media_type="text/html",
+        headers={"Content-Disposition": f"attachment; filename=poi-{msisdn}.html"},
+    )
+
+
+@api_router.get("/reports/ip/{destination_ip}.csv", tags=["reports"])
+async def export_ip_csv(destination_ip: str, case_id: str | None = None) -> Response:
+    return Response(
+        content=store.export_ip_csv(destination_ip=destination_ip, case_id=case_id),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=ip-{destination_ip}.csv"},
+    )
+
+
+@api_router.get("/reports/ip/{destination_ip}.html", tags=["reports"])
+async def export_ip_html(destination_ip: str, case_id: str | None = None) -> Response:
+    return Response(
+        content=store.export_ip_html(destination_ip=destination_ip, case_id=case_id),
+        media_type="text/html",
+        headers={"Content-Disposition": f"attachment; filename=ip-{destination_ip}.html"},
+    )
 
 
 @api_router.get("/reports/poi/{msisdn}", response_model=PoiSummaryReport, tags=["reports"])
@@ -229,6 +323,16 @@ async def audit_logs(limit: int = Query(default=100, ge=1, le=1000)) -> list[Aud
 @api_router.get("/search", response_model=list[SearchResult], tags=["search"])
 async def search(q: str = Query(min_length=1), limit: int = Query(default=20, ge=1, le=100)) -> list[SearchResult]:
     return store.search(q=q, limit=limit)
+
+
+@api_router.get("/persistence/status", response_model=PersistenceStatus, tags=["persistence"])
+async def persistence_status() -> PersistenceStatus:
+    return store.persistence_status()
+
+
+@api_router.post("/persistence/snapshot", response_model=PersistenceStatus, tags=["persistence"])
+async def create_persistence_snapshot() -> PersistenceStatus:
+    return store.write_sqlite_snapshot()
 
 
 @api_router.get("/platform-ranges", response_model=list[PlatformRange], tags=["settings"])

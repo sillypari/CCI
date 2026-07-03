@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -99,6 +101,8 @@ COLUMN_ALIASES_FOR_REPORT = {
     },
 }
 
+SUPPORTED_ARCHIVE_SUFFIXES = {".csv", ".txt", ".tsv", ".json", ".xlsx", ".xls", ".zip"}
+
 
 class IngestionError(Exception):
     """Raised when Polars cannot parse or describe the uploaded evidence."""
@@ -108,6 +112,7 @@ class IngestionError(Exception):
 class ParsedUpload:
     rows: list[dict[str, Any]]
     report: UploadFormatReport
+    source_files: list[str]
 
 
 def parse_ipdr_upload(filename: str, content: bytes) -> ParsedUpload:
@@ -115,6 +120,11 @@ def parse_ipdr_upload(filename: str, content: bytes) -> ParsedUpload:
         raise IngestionError("Uploaded file is empty")
 
     suffix = Path(filename).suffix.lower()
+    if suffix == ".zip":
+        return read_zip_archive(filename, content)
+    if suffix == ".rar":
+        raise IngestionError("RAR archives require a server-side extractor. Upload an extracted CSV/TSV/JSON/XLSX file or a ZIP archive.")
+
     encoding = detect_encoding(content)
     delimiter: str | None = None
     notes: list[str] = []
@@ -163,7 +173,61 @@ def parse_ipdr_upload(filename: str, content: bytes) -> ParsedUpload:
         missing_required=missing_required,
         notes=notes,
     )
-    return ParsedUpload(rows=dataframe.to_dicts(), report=report)
+    return ParsedUpload(rows=dataframe.to_dicts(), report=report, source_files=[filename])
+
+
+def read_zip_archive(filename: str, content: bytes) -> ParsedUpload:
+    rows: list[dict[str, Any]] = []
+    member_reports: list[UploadFormatReport] = []
+    source_files: list[str] = []
+    notes: list[str] = []
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(content))
+    except zipfile.BadZipFile as exc:
+        raise IngestionError(f"ZIP archive is not readable: {exc}") from exc
+
+    with archive:
+        for member in archive.infolist():
+            if member.is_dir():
+                continue
+            member_name = member.filename.replace("\\", "/")
+            member_basename = Path(member_name).name
+            if member_name.startswith("__MACOSX/") or member_basename.startswith("."):
+                continue
+            suffix = Path(member_name).suffix.lower()
+            if suffix not in SUPPORTED_ARCHIVE_SUFFIXES:
+                notes.append(f"Skipped unsupported archive member {member_name}")
+                continue
+            try:
+                nested = parse_ipdr_upload(member_name, archive.read(member))
+            except IngestionError as exc:
+                notes.append(f"Skipped {member_name}: {exc}")
+                continue
+            for row in nested.rows:
+                row["source_file"] = member_name
+                rows.append(row)
+            member_reports.append(nested.report)
+            source_files.extend(nested.source_files or [member_name])
+
+    if not rows:
+        detail = "; ".join(notes) if notes else "No supported IPDR files were found inside the ZIP archive"
+        raise IngestionError(detail)
+
+    columns = sorted({column for report in member_reports for column in report.columns})
+    missing_required = sorted({field for report in member_reports for field in report.missing_required})
+    adapters = sorted({report.adapter for report in member_reports})
+    report = UploadFormatReport(
+        parser_engine="polars",
+        file_format="zip",
+        delimiter=None,
+        adapter=adapters[0] if len(adapters) == 1 else "Archive Mixed",
+        encoding="archive",
+        columns=columns,
+        rows_detected=len(rows),
+        missing_required=missing_required,
+        notes=[f"Archive members parsed: {len(member_reports)}", *notes],
+    )
+    return ParsedUpload(rows=rows, report=report, source_files=sorted(set(source_files)))
 
 
 def read_json_records(content: bytes) -> pl.DataFrame:

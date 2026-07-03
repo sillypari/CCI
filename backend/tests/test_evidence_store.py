@@ -1,3 +1,6 @@
+import io
+import sqlite3
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -202,3 +205,55 @@ def test_case_scoped_import_spec_and_investigation_reports(tmp_path: Path) -> No
     assert locations[0].day_sessions == 1
     assert locations[0].night_sessions == 1
     assert "domain" in csv_export and "cell_id" in csv_export
+
+
+def test_validate_upload_zip_ingestion_jobs_and_sqlite_snapshot(tmp_path: Path) -> None:
+    evidence_store = EvidenceStore(tmp_path)
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr("operator/valid_ipdr.csv", read_fixture("valid_ipdr.csv"))
+        archive.writestr("operator/readme.txt", "not,ipdr\n")
+
+    content = archive_buffer.getvalue()
+    validation = evidence_store.validate_upload("batch.zip", content)
+    upload = evidence_store.ingest_upload("batch.zip", content)
+    jobs = evidence_store.list_jobs()
+    status = evidence_store.write_sqlite_snapshot()
+
+    assert validation.file_format == "zip"
+    assert validation.archive_members
+    assert upload.format_report is not None
+    assert upload.format_report.file_format == "zip"
+    assert upload.rows_valid == 6
+    assert jobs[0].upload_id == upload.id
+    assert jobs[0].archive_members
+    assert status.sessions == 6
+    assert Path(status.path).exists()
+
+    connection = sqlite3.connect(status.path)
+    try:
+        session_count = connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+        job_count = connection.execute("SELECT COUNT(*) FROM ingestion_jobs").fetchone()[0]
+    finally:
+        connection.close()
+    assert session_count == 6
+    assert job_count == 1
+
+
+def test_graph_and_report_exports_are_investigator_readable(tmp_path: Path) -> None:
+    evidence_store = EvidenceStore(tmp_path)
+    evidence_store.ingest_upload("valid_ipdr.csv", read_fixture("valid_ipdr.csv"))
+
+    graph_json = evidence_store.export_graph_json(msisdn="919876543210")
+    graphml = evidence_store.export_graph_graphml(msisdn="919876543210")
+    poi_csv = evidence_store.export_poi_csv("919876543210")
+    ip_csv = evidence_store.export_ip_csv("49.36.128.45")
+    poi_html = evidence_store.export_poi_html("919876543210")
+    ip_html = evidence_store.export_ip_html("49.36.128.45")
+
+    assert '"nodes"' in graph_json
+    assert "<graphml" in graphml
+    assert "919876543210" in poi_csv
+    assert "49.36.128.45" in ip_csv
+    assert "PoI Summary" in poi_html
+    assert "IP Summary" in ip_html

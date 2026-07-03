@@ -3199,3 +3199,131 @@ tbody tr:hover {
     grid-template-columns: minmax(72px, 96px) minmax(0, 1fr) 36px;
   }
 }
+/* Production intake, export, and persistence controls */
+.button-link {
+  text-decoration: none;
+}
+
+.button-row,
+.report-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.upload-drop .button-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.validation-card,
+.persistence-card,
+.job-row {
+  border: 1px solid var(--line-firm);
+  border-radius: 12px;
+  background: #f7fafc;
+}
+
+.validation-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 12px;
+}
+
+.validation-card.is-ok {
+  background: linear-gradient(135deg, rgba(74, 203, 214, 0.2), #ffffff 62%);
+  border-color: rgba(10, 154, 168, 0.32);
+}
+
+.validation-card.is-warning {
+  background: rgba(214, 209, 74, 0.1);
+  border-color: rgba(170, 142, 10, 0.28);
+}
+
+.validation-card strong,
+.job-row strong,
+.persistence-card strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.validation-card span,
+.validation-card p,
+.job-row span,
+.persistence-card span,
+.persistence-card p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.validation-card p {
+  grid-column: 1 / -1;
+}
+
+.queue-ledger {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.queue-ledger h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.job-list {
+  display: grid;
+  gap: 8px;
+}
+
+.job-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.report-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.system-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.persistence-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px;
+}
+
+.persistence-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+@media (max-width: 760px) {
+  .upload-drop .button-row,
+  .report-card__head,
+  .persistence-card {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .persistence-card__meta {
+    justify-content: flex-start;
+  }
+}

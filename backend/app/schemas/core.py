@@ -44,6 +44,48 @@ class UploadStatus(BaseModel):
     format_report: UploadFormatReport | None = None
 
 
+class IngestionJob(BaseModel):
+    id: str
+    upload_id: str | None = None
+    filename: str
+    case_id: str = "CASE-GENERAL"
+    import_spec_id: str | None = None
+    status: Literal["queued", "processing", "completed", "failed"]
+    progress: int = Field(ge=0, le=100)
+    rows_total: int = 0
+    rows_valid: int = 0
+    rows_quarantined: int = 0
+    archive_members: list[str] = Field(default_factory=list)
+    message: str | None = None
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
+class AdapterValidationReport(BaseModel):
+    filename: str
+    adapter: str
+    file_format: str
+    rows_detected: int
+    required_detected: list[str] = Field(default_factory=list)
+    missing_required: list[str] = Field(default_factory=list)
+    optional_detected: list[str] = Field(default_factory=list)
+    columns: list[str] = Field(default_factory=list)
+    archive_members: list[str] = Field(default_factory=list)
+    confidence: float = Field(ge=0, le=1)
+    notes: list[str] = Field(default_factory=list)
+
+
+class PersistenceStatus(BaseModel):
+    backend: str
+    enabled: bool
+    path: str
+    cases: int
+    uploads: int
+    sessions: int
+    reports: int = 0
+    last_snapshot_at: datetime | None = None
+
+
 class SessionRecord(BaseModel):
     id: str
     upload_id: str
@@ -231,6 +273,8 @@ class SearchResult(BaseModel):
     title: str
     subtitle: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class CaseCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     crime_type: str = Field(default="Unspecified", max_length=80)

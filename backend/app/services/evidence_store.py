@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import csv
+import html
 import io
 import ipaddress
 import json
 import re
+import sqlite3
 import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -14,6 +16,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.schemas.core import (
+    AdapterValidationReport,
     ApplicationSummary,
     AuditLogEntry,
     CaseCreate,
@@ -29,9 +32,11 @@ from app.schemas.core import (
     GraphNode,
     ImportSpecCreate,
     ImportSpecification,
+    IngestionJob,
     ImeiFrequencyReport,
     IpSummaryReport,
     LocationSummaryReport,
+    PersistenceStatus,
     PlatformRange,
     PoiSummaryReport,
     QuarantineRecord,
@@ -205,15 +210,18 @@ class EvidenceStore:
         self.storage_dir = base_dir
         self.evidence_dir = self.storage_dir / "evidence_files"
         self.storage_file = self.storage_dir / "evidence_store.json"
+        self.sqlite_file = self.storage_dir / "evidence_store.sqlite"
         self._lock = RLock()
         self.cases: list[CaseRecord] = []
         self.import_specs: list[ImportSpecification] = []
         self.uploads: list[UploadStatus] = []
+        self.jobs: list[IngestionJob] = []
         self.sessions: list[SessionRecord] = []
         self.extractions: list[ExtractionResult] = []
         self.packages: list[RequestPackage] = []
         self.audit_logs: list[AuditLogEntry] = []
         self.platform_ranges: list[PlatformRange] = []
+        self.last_persistence_snapshot_at: datetime | None = None
         self._ensure_dirs()
         self._load()
 
@@ -233,6 +241,9 @@ class EvidenceStore:
             self.cases = [CaseRecord.model_validate(item) for item in payload.get("cases", [])] or self._default_cases()
             self.import_specs = [ImportSpecification.model_validate(item) for item in payload.get("import_specs", [])] or self._default_import_specs()
             self.uploads = [UploadStatus.model_validate(item) for item in payload.get("uploads", [])]
+            self.jobs = [IngestionJob.model_validate(item) for item in payload.get("jobs", [])]
+            snapshot_at = payload.get("last_persistence_snapshot_at")
+            self.last_persistence_snapshot_at = datetime.fromisoformat(snapshot_at) if snapshot_at else None
             self.sessions = [SessionRecord.model_validate(item) for item in payload.get("sessions", [])]
             self.extractions = [ExtractionResult.model_validate(item) for item in payload.get("extractions", [])]
             self.packages = [RequestPackage.model_validate(item) for item in payload.get("packages", [])]
@@ -249,6 +260,8 @@ class EvidenceStore:
             "cases": [item.model_dump(mode="json") for item in self.cases],
             "import_specs": [item.model_dump(mode="json") for item in self.import_specs],
             "uploads": [item.model_dump(mode="json") for item in self.uploads],
+            "jobs": [item.model_dump(mode="json") for item in self.jobs],
+            "last_persistence_snapshot_at": self.last_persistence_snapshot_at.isoformat() if self.last_persistence_snapshot_at else None,
             "sessions": [item.model_dump(mode="json") for item in self.sessions],
             "extractions": [item.model_dump(mode="json") for item in self.extractions],
             "packages": [item.model_dump(mode="json") for item in self.packages],
@@ -437,6 +450,15 @@ class EvidenceStore:
             if not normalized_columns.intersection(COLUMN_ALIASES[canonical]):
                 missing.append(canonical)
         return missing
+
+    def list_jobs(self) -> list[IngestionJob]:
+        with self._lock:
+            return sorted(self.jobs, key=lambda item: item.created_at, reverse=True)
+
+    def get_job(self, job_id: str) -> IngestionJob | None:
+        with self._lock:
+            return next((job for job in self.jobs if job.id == job_id), None)
+
     def list_uploads(self) -> list[UploadStatus]:
         with self._lock:
             return sorted(self.uploads, key=lambda item: item.created_at, reverse=True)
@@ -449,12 +471,10 @@ class EvidenceStore:
         upload = self.get_upload(upload_id)
         return None if upload is None else upload.quarantine_errors
 
-    def ingest_upload(self, filename: str, content: bytes, case_id: str | None = None, import_spec_id: str | None = None) -> UploadStatus:
+    def validate_upload(self, filename: str, content: bytes, import_spec_id: str | None = None) -> AdapterValidationReport:
         if not content:
             raise UploadValidationError("Uploaded file is empty")
-
         safe_filename = self._safe_filename(filename or "ipdr_upload.csv")
-        resolved_case_id = self._resolve_case_id(case_id)
         import_spec = self.get_import_spec(import_spec_id)
         if import_spec_id and import_spec is None:
             raise UploadValidationError(f"Import specification not found: {import_spec_id}")
@@ -462,6 +482,7 @@ class EvidenceStore:
             parsed_upload = parse_ipdr_upload(safe_filename, content)
         except IngestionError as exc:
             raise UploadValidationError(str(exc)) from exc
+
         rows = parsed_upload.rows
         report = parsed_upload.report
         if import_spec is not None:
@@ -473,11 +494,74 @@ class EvidenceStore:
                     "notes": [*report.notes, f"Applied import specification {import_spec.id}"],
                 }
             )
-        if report.missing_required:
-            missing = ", ".join(report.missing_required)
-            raise UploadValidationError(f"Missing required column(s): {missing}")
-        if not rows:
-            raise UploadValidationError("No IPDR data rows were found in the uploaded file")
+
+        required_detected = [field for field in ("msisdn", "source_ip", "source_port", "destination_ip", "destination_port") if field not in report.missing_required]
+        optional_detected = sorted(set(report.columns).difference(required_detected))[:50]
+        completeness = len(required_detected) / 5
+        quality_penalty = 0.12 if report.notes else 0
+        confidence = max(0.05, min(1.0, completeness - quality_penalty))
+        return AdapterValidationReport(
+            filename=safe_filename,
+            adapter=report.adapter,
+            file_format=report.file_format,
+            rows_detected=report.rows_detected,
+            required_detected=required_detected,
+            missing_required=report.missing_required,
+            optional_detected=optional_detected,
+            columns=report.columns,
+            archive_members=parsed_upload.source_files if report.file_format == "zip" else [],
+            confidence=round(confidence, 2),
+            notes=report.notes,
+        )
+
+    def ingest_upload(self, filename: str, content: bytes, case_id: str | None = None, import_spec_id: str | None = None) -> UploadStatus:
+        if not content:
+            raise UploadValidationError("Uploaded file is empty")
+
+        safe_filename = self._safe_filename(filename or "ipdr_upload.csv")
+        resolved_case_id = self._resolve_case_id(case_id)
+        import_spec = self.get_import_spec(import_spec_id)
+        if import_spec_id and import_spec is None:
+            raise UploadValidationError(f"Import specification not found: {import_spec_id}")
+
+        job = IngestionJob(
+            id=f"JOB-{uuid.uuid4().hex[:8]}",
+            filename=safe_filename,
+            case_id=resolved_case_id,
+            import_spec_id=import_spec.id if import_spec else None,
+            status="processing",
+            progress=5,
+            message="Parsing evidence file",
+            created_at=now_ist(),
+        )
+        with self._lock:
+            self.jobs.append(job)
+            self._save()
+
+        try:
+            parsed_upload = parse_ipdr_upload(safe_filename, content)
+            rows = parsed_upload.rows
+            report = parsed_upload.report
+            if import_spec is not None:
+                rows = self._apply_import_spec(rows, import_spec)
+                report = report.model_copy(
+                    update={
+                        "adapter": f"Custom: {import_spec.name}",
+                        "missing_required": self._missing_required_after_mapping(rows),
+                        "notes": [*report.notes, f"Applied import specification {import_spec.id}"],
+                    }
+                )
+            if report.missing_required:
+                missing = ", ".join(report.missing_required)
+                raise UploadValidationError(f"Missing required column(s): {missing}")
+            if not rows:
+                raise UploadValidationError("No IPDR data rows were found in the uploaded file")
+        except IngestionError as exc:
+            self._finish_job(job.id, status="failed", progress=100, message=str(exc))
+            raise UploadValidationError(str(exc)) from exc
+        except UploadValidationError as exc:
+            self._finish_job(job.id, status="failed", progress=100, message=str(exc))
+            raise
 
         upload_id = f"UPL-{uuid.uuid4().hex[:8]}"
         stored_path = self.evidence_dir / f"{upload_id}_{safe_filename}"
@@ -486,8 +570,9 @@ class EvidenceStore:
         sessions: list[SessionRecord] = []
         quarantine: list[QuarantineRecord] = []
         for row_number, row in enumerate(rows, start=1):
+            row_filename = self._safe_filename(str(row.get("source_file") or safe_filename))
             try:
-                sessions.append(self._session_from_row(upload_id, safe_filename, row_number, row, resolved_case_id))
+                sessions.append(self._session_from_row(upload_id, row_filename, row_number, row, resolved_case_id))
             except RowValidationError as exc:
                 quarantine.append(QuarantineRecord(row_number=row_number, field=exc.field, reason=exc.reason))
             except (TypeError, ValueError) as exc:
@@ -504,7 +589,7 @@ class EvidenceStore:
             rows_valid=len(sessions),
             rows_quarantined=len(quarantine),
             progress=100,
-            created_at=now_ist(),
+            created_at=job.created_at,
             completed_at=now_ist(),
             message=self._upload_message(len(sessions), len(quarantine)),
             quarantine_errors=quarantine[:100],
@@ -514,6 +599,22 @@ class EvidenceStore:
         with self._lock:
             self.sessions.extend(sessions)
             self.uploads.append(upload)
+            self._replace_job_unlocked(
+                job.id,
+                job.model_copy(
+                    update={
+                        "upload_id": upload.id,
+                        "status": status,
+                        "progress": 100,
+                        "rows_total": upload.rows_total,
+                        "rows_valid": upload.rows_valid,
+                        "rows_quarantined": upload.rows_quarantined,
+                        "archive_members": parsed_upload.source_files if report.file_format == "zip" else [],
+                        "message": upload.message,
+                        "completed_at": upload.completed_at,
+                    }
+                ),
+            )
             self._audit_unlocked(
                 "upload",
                 "upload",
@@ -526,6 +627,7 @@ class EvidenceStore:
                     "parser_engine": report.parser_engine,
                     "adapter": report.adapter,
                     "file_format": report.file_format,
+                    "archive_members": parsed_upload.source_files if report.file_format == "zip" else [],
                     "case_id": resolved_case_id,
                     "import_spec_id": import_spec.id if import_spec else None,
                 },
@@ -533,6 +635,23 @@ class EvidenceStore:
             self._save()
         return upload
 
+    def _finish_job(self, job_id: str, status: str, progress: int, message: str) -> None:
+        with self._lock:
+            current = next((job for job in self.jobs if job.id == job_id), None)
+            if current is None:
+                return
+            self._replace_job_unlocked(
+                job_id,
+                current.model_copy(update={"status": status, "progress": progress, "message": message, "completed_at": now_ist()}),
+            )
+            self._save()
+
+    def _replace_job_unlocked(self, job_id: str, replacement: IngestionJob) -> None:
+        for index, item in enumerate(self.jobs):
+            if item.id == job_id:
+                self.jobs[index] = replacement
+                return
+        self.jobs.append(replacement)
     def _upload_message(self, valid: int, quarantined: int) -> str:
         if valid and quarantined:
             return f"Ingested {valid} rows; quarantined {quarantined} rows requiring review"
@@ -1406,6 +1525,232 @@ class EvidenceStore:
             writer.writerow({field: data.get(field, "") for field in fields})
         return output.getvalue()
 
+    def persistence_status(self) -> PersistenceStatus:
+        return PersistenceStatus(
+            backend="sqlite_snapshot",
+            enabled=True,
+            path=str(self.sqlite_file),
+            cases=len(self.cases),
+            uploads=len(self.uploads),
+            sessions=len(self.sessions),
+            reports=len(self.extractions) + len(self.packages),
+            last_snapshot_at=self.last_persistence_snapshot_at,
+        )
+
+    def write_sqlite_snapshot(self) -> PersistenceStatus:
+        with self._lock:
+            cases = list(self.cases)
+            uploads = list(self.uploads)
+            jobs = list(self.jobs)
+            sessions = list(self.sessions)
+            extractions = list(self.extractions)
+            packages = list(self.packages)
+            audit_logs = list(self.audit_logs)
+
+        connection = sqlite3.connect(self.sqlite_file)
+        try:
+            with connection:
+                connection.execute("PRAGMA journal_mode=WAL")
+                connection.execute("CREATE TABLE IF NOT EXISTS cases (id TEXT PRIMARY KEY, name TEXT, crime_type TEXT, status TEXT, updated_at TEXT, payload_json TEXT NOT NULL)")
+                connection.execute("CREATE TABLE IF NOT EXISTS uploads (id TEXT PRIMARY KEY, filename TEXT, case_id TEXT, status TEXT, rows_total INTEGER, rows_valid INTEGER, rows_quarantined INTEGER, created_at TEXT, payload_json TEXT NOT NULL)")
+                connection.execute("CREATE TABLE IF NOT EXISTS ingestion_jobs (id TEXT PRIMARY KEY, upload_id TEXT, filename TEXT, case_id TEXT, status TEXT, progress INTEGER, created_at TEXT, completed_at TEXT, payload_json TEXT NOT NULL)")
+                connection.execute("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, upload_id TEXT, case_id TEXT, a_party_msisdn TEXT, source_ip TEXT, source_port INTEGER, translated_ip TEXT, translated_port INTEGER, destination_ip TEXT, destination_port INTEGER, started_at TEXT, classification TEXT, confidence REAL, source_file TEXT, row_number INTEGER, payload_json TEXT NOT NULL)")
+                connection.execute("CREATE TABLE IF NOT EXISTS investigation_reports (id TEXT PRIMARY KEY, report_type TEXT, subject TEXT, created_at TEXT, payload_json TEXT NOT NULL)")
+                connection.execute("CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, timestamp TEXT, action TEXT, entity_type TEXT, entity_id TEXT, payload_json TEXT NOT NULL)")
+                for table in ("cases", "uploads", "ingestion_jobs", "sessions", "investigation_reports", "audit_logs"):
+                    connection.execute(f"DELETE FROM {table}")
+                connection.executemany(
+                    "INSERT INTO cases VALUES (?, ?, ?, ?, ?, ?)",
+                    [(item.id, item.name, item.crime_type, item.status, item.updated_at.isoformat(), json.dumps(item.model_dump(mode="json"), sort_keys=True)) for item in cases],
+                )
+                connection.executemany(
+                    "INSERT INTO uploads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [(item.id, item.filename, item.case_id, item.status, item.rows_total, item.rows_valid, item.rows_quarantined, item.created_at.isoformat(), json.dumps(item.model_dump(mode="json"), sort_keys=True)) for item in uploads],
+                )
+                connection.executemany(
+                    "INSERT INTO ingestion_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [(item.id, item.upload_id, item.filename, item.case_id, item.status, item.progress, item.created_at.isoformat(), item.completed_at.isoformat() if item.completed_at else None, json.dumps(item.model_dump(mode="json"), sort_keys=True)) for item in jobs],
+                )
+                connection.executemany(
+                    "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        (
+                            item.id,
+                            item.upload_id,
+                            item.case_id,
+                            item.a_party_msisdn,
+                            item.source_ip,
+                            item.source_port,
+                            item.translated_ip,
+                            item.translated_port,
+                            item.destination_ip,
+                            item.destination_port,
+                            item.started_at.isoformat(),
+                            item.classification,
+                            item.confidence,
+                            item.source_file,
+                            item.row_number,
+                            json.dumps(item.model_dump(mode="json"), sort_keys=True),
+                        )
+                        for item in sessions
+                    ],
+                )
+                report_rows = [
+                    (item.id, "extraction", item.requested_msisdn, item.created_at.isoformat(), json.dumps(item.model_dump(mode="json"), sort_keys=True))
+                    for item in extractions
+                ] + [
+                    (item.id, "request_package", item.session_id, item.created_at.isoformat(), json.dumps(item.model_dump(mode="json"), sort_keys=True))
+                    for item in packages
+                ]
+                connection.executemany("INSERT INTO investigation_reports VALUES (?, ?, ?, ?, ?)", report_rows)
+                connection.executemany(
+                    "INSERT INTO audit_logs VALUES (?, ?, ?, ?, ?, ?)",
+                    [(item.id, item.timestamp.isoformat(), item.action, item.entity_type, item.entity_id, json.dumps(item.model_dump(mode="json"), sort_keys=True)) for item in audit_logs],
+                )
+        finally:
+            connection.close()
+
+        with self._lock:
+            self.last_persistence_snapshot_at = now_ist()
+            self._audit_unlocked("sqlite_snapshot", "persistence", "evidence_store.sqlite", {"path": str(self.sqlite_file), "sessions": len(sessions)})
+            self._save()
+        return self.persistence_status()
+
+    def export_graph_json(self, msisdn: str | None = None, classification: str | None = None, case_id: str | None = None, limit: int = 5_000) -> str:
+        return self.communication_graph(msisdn=msisdn, classification=classification, case_id=case_id, limit=limit).model_dump_json(indent=2)
+
+    def export_graph_graphml(self, msisdn: str | None = None, classification: str | None = None, case_id: str | None = None, limit: int = 5_000) -> str:
+        graph = self.communication_graph(msisdn=msisdn, classification=classification, case_id=case_id, limit=limit)
+        lines = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+            '  <key id="label" for="node" attr.name="label" attr.type="string"/>',
+            '  <key id="kind" for="node" attr.name="kind" attr.type="string"/>',
+            '  <key id="operator" for="node" attr.name="operator" attr.type="string"/>',
+            '  <key id="classification" for="edge" attr.name="classification" attr.type="string"/>',
+            '  <key id="sessions" for="edge" attr.name="sessions" attr.type="int"/>',
+            '  <key id="confidence" for="edge" attr.name="confidence" attr.type="double"/>',
+            '  <graph id="PramaanIPDR" edgedefault="directed">',
+        ]
+        for node in graph.nodes:
+            node_id = html.escape(node.id, quote=True)
+            lines.extend(
+                [
+                    f'    <node id="{node_id}">',
+                    f'      <data key="label">{html.escape(node.title, quote=True)}</data>',
+                    f'      <data key="kind">{html.escape(node.kind, quote=True)}</data>',
+                    f'      <data key="operator">{html.escape(node.operator, quote=True)}</data>',
+                    '    </node>',
+                ]
+            )
+        for link in graph.links:
+            lines.extend(
+                [
+                    f'    <edge id="{html.escape(link.id, quote=True)}" source="{html.escape(link.source_id, quote=True)}" target="{html.escape(link.target_id, quote=True)}">',
+                    f'      <data key="classification">{html.escape(link.classification, quote=True)}</data>',
+                    f'      <data key="sessions">{link.count}</data>',
+                    f'      <data key="confidence">{link.confidence:.2f}</data>',
+                    '    </edge>',
+                ]
+            )
+        lines.extend(['  </graph>', '</graphml>'])
+        return "\n".join(lines)
+
+    def export_poi_csv(self, msisdn: str, case_id: str | None = None) -> str:
+        report = self.poi_summary(msisdn=msisdn, case_id=case_id)
+        output = io.StringIO()
+        fields = ["msisdn", "total_sessions", "p2p", "relay", "unknown", "first_seen", "last_seen", "total_bytes", "imei", "endpoint", "destination_sessions", "classification", "operator", "destination_bytes"]
+        writer = csv.DictWriter(output, fieldnames=fields)
+        writer.writeheader()
+        destinations = report.top_destinations or [{}]
+        for destination in destinations:
+            writer.writerow(
+                {
+                    "msisdn": report.msisdn,
+                    "total_sessions": report.total_sessions,
+                    "p2p": report.p2p,
+                    "relay": report.relay,
+                    "unknown": report.unknown,
+                    "first_seen": report.first_seen.isoformat() if report.first_seen else "",
+                    "last_seen": report.last_seen.isoformat() if report.last_seen else "",
+                    "total_bytes": report.total_bytes,
+                    "imei": ";".join(report.imeis),
+                    "endpoint": destination.get("endpoint", ""),
+                    "destination_sessions": destination.get("sessions", ""),
+                    "classification": destination.get("classification", ""),
+                    "operator": destination.get("operator", ""),
+                    "destination_bytes": destination.get("bytes_total", ""),
+                }
+            )
+        return output.getvalue()
+
+    def export_ip_csv(self, destination_ip: str, case_id: str | None = None) -> str:
+        report = self.ip_summary(destination_ip=destination_ip, case_id=case_id)
+        output = io.StringIO()
+        fields = ["destination_ip", "total_sessions", "msisdn", "ports", "operator", "classification", "first_seen", "last_seen", "total_bytes"]
+        writer = csv.DictWriter(output, fieldnames=fields)
+        writer.writeheader()
+        for msisdn in report.msisdns or [""]:
+            writer.writerow(
+                {
+                    "destination_ip": report.destination_ip,
+                    "total_sessions": report.total_sessions,
+                    "msisdn": msisdn,
+                    "ports": ";".join(str(port) for port in report.ports),
+                    "operator": report.operator,
+                    "classification": report.classification,
+                    "first_seen": report.first_seen.isoformat() if report.first_seen else "",
+                    "last_seen": report.last_seen.isoformat() if report.last_seen else "",
+                    "total_bytes": report.total_bytes,
+                }
+            )
+        return output.getvalue()
+
+    def export_poi_html(self, msisdn: str, case_id: str | None = None) -> str:
+        report = self.poi_summary(msisdn=msisdn, case_id=case_id)
+        rows = "".join(
+            f"<tr><td>{html.escape(str(item.get('endpoint', '')))}</td><td>{item.get('sessions', '')}</td><td>{html.escape(str(item.get('classification', '')))}</td><td>{html.escape(str(item.get('operator', '')))}</td><td>{item.get('bytes_total', '')}</td></tr>"
+            for item in report.top_destinations
+        )
+        return self._html_report(
+            title=f"PoI Summary {html.escape(report.msisdn)}",
+            summary=f"Sessions: {report.total_sessions} | P2P: {report.p2p} | Relay: {report.relay} | Bytes: {report.total_bytes}",
+            body=f"<p><strong>IMEI:</strong> {html.escape(', '.join(report.imeis) or '-')}</p><table><thead><tr><th>Endpoint</th><th>Sessions</th><th>Class</th><th>Operator</th><th>Bytes</th></tr></thead><tbody>{rows}</tbody></table>",
+        )
+
+    def export_ip_html(self, destination_ip: str, case_id: str | None = None) -> str:
+        report = self.ip_summary(destination_ip=destination_ip, case_id=case_id)
+        msisdns = "".join(f"<li>{html.escape(value)}</li>" for value in report.msisdns)
+        return self._html_report(
+            title=f"IP Summary {html.escape(report.destination_ip)}",
+            summary=f"Sessions: {report.total_sessions} | Class: {report.classification} | Operator: {html.escape(report.operator)} | Bytes: {report.total_bytes}",
+            body=f"<p><strong>Ports:</strong> {html.escape(', '.join(str(port) for port in report.ports) or '-')}</p><h2>A-party MSISDNs</h2><ul>{msisdns}</ul>",
+        )
+
+    def _html_report(self, title: str, summary: str, body: str) -> str:
+        generated_at = html.escape(now_ist().isoformat())
+        return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{title}</title>
+  <style>
+    body {{ font-family: Inter, Arial, sans-serif; margin: 32px; color: #1f2328; }}
+    h1 {{ font-size: 22px; margin: 0 0 8px; }}
+    h2 {{ font-size: 16px; margin-top: 24px; }}
+    .meta {{ color: #656d76; margin-bottom: 24px; }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 16px; }}
+    th, td {{ border: 1px solid #d1d9e0; padding: 8px; text-align: left; }}
+    th {{ background: #f0f2f5; }}
+  </style>
+</head>
+<body>
+  <h1>{title}</h1>
+  <div class="meta">Generated by Pramaan IPDR at {generated_at}</div>
+  <p>{html.escape(summary)}</p>
+  {body}
+</body>
+</html>"""
     def _pattern_id(self, pattern_type: str, key: str) -> str:
         return f"SIG-{uuid.uuid5(uuid.NAMESPACE_URL, f'pramaan-ipdr:{pattern_type}:{key}').hex[:8]}"
 

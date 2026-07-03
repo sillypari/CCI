@@ -36,6 +36,7 @@ async function request(path, options = {}) {
 export const api = {
   dashboard: () => request("/dashboard/stats"),
   uploads: () => request("/uploads"),
+  uploadJobs: () => request("/uploads/jobs"),
   sessions: (query = "") => request(`/sessions${query}`),
   graph: (query = "") => request(`/graph${query}`),
   patterns: () => request("/analytics/patterns"),
@@ -53,6 +54,14 @@ export const api = {
   imeiFrequency: (query = "") => request(`/reports/imei-frequency${query}`),
   locationSummary: (query = "") => request(`/reports/location-summary${query}`),
   sessionCsvUrl: (query = "") => `${API_URL}/reports/sessions.csv${query}`,
+  graphJsonUrl: (query = "") => `${API_URL}/graph/export.json${query}`,
+  graphGraphmlUrl: (query = "") => `${API_URL}/graph/export.graphml${query}`,
+  poiCsvUrl: (msisdn) => `${API_URL}/reports/poi/${encodeURIComponent(msisdn)}.csv`,
+  poiHtmlUrl: (msisdn) => `${API_URL}/reports/poi/${encodeURIComponent(msisdn)}.html`,
+  ipCsvUrl: (ip) => `${API_URL}/reports/ip/${encodeURIComponent(ip)}.csv`,
+  ipHtmlUrl: (ip) => `${API_URL}/reports/ip/${encodeURIComponent(ip)}.html`,
+  persistenceStatus: () => request("/persistence/status"),
+  createPersistenceSnapshot: () => request("/persistence/snapshot", { method: "POST" }),
   createCase: (payload) =>
     request("/cases", {
       method: "POST",
@@ -77,5 +86,11 @@ export const api = {
     if (options.caseId) body.append("case_id", options.caseId);
     if (options.importSpecId) body.append("import_spec_id", options.importSpecId);
     return request("/uploads", { method: "POST", body });
+  },
+  validateUpload: (file, options = {}) => {
+    const body = new FormData();
+    body.append("file", file);
+    if (options.importSpecId) body.append("import_spec_id", options.importSpecId);
+    return request("/uploads/validate", { method: "POST", body });
   }
 };

@@ -19,6 +19,11 @@ def test_upload_extract_and_quarantine_api_flow(tmp_path: Path, monkeypatch) -> 
     assert health.json()["status"] == "ok"
 
     with (FIXTURES / "valid_ipdr.csv").open("rb") as handle:
+        validate_response = client.post("/api/uploads/validate", files={"file": ("valid_ipdr.csv", handle, "text/csv")})
+    assert validate_response.status_code == 200
+    assert validate_response.json()["missing_required"] == []
+
+    with (FIXTURES / "valid_ipdr.csv").open("rb") as handle:
         upload_response = client.post("/api/uploads", files={"file": ("valid_ipdr.csv", handle, "text/csv")})
     assert upload_response.status_code == 200
     upload = upload_response.json()
@@ -54,6 +59,17 @@ def test_upload_extract_and_quarantine_api_flow(tmp_path: Path, monkeypatch) -> 
     assert packages.status_code == 200
     assert packages.json()
 
+    jobs = client.get("/api/uploads/jobs")
+    assert jobs.status_code == 200
+    assert jobs.json()[0]["status"] == "completed"
+
+    graph_json = client.get("/api/graph/export.json", params={"msisdn": "919876543210"})
+    assert graph_json.status_code == 200
+    assert '"nodes"' in graph_json.text
+    graphml = client.get("/api/graph/export.graphml", params={"msisdn": "919876543210"})
+    assert graphml.status_code == 200
+    assert "<graphml" in graphml.text
+
     assert client.get("/api/cases").status_code == 200
     assert client.get("/api/import-specs").status_code == 200
     assert client.get("/api/analytics/timeline", params={"bucket": "second"}).status_code == 200
@@ -63,9 +79,18 @@ def test_upload_extract_and_quarantine_api_flow(tmp_path: Path, monkeypatch) -> 
     assert client.get("/api/reports/common-applications").status_code == 200
     assert client.get("/api/reports/imei-frequency").status_code == 200
     assert client.get("/api/reports/location-summary").status_code == 200
+    assert client.get("/api/reports/poi/919876543210.csv").status_code == 200
+    assert client.get("/api/reports/poi/919876543210.html").status_code == 200
+    assert client.get("/api/reports/ip/49.36.128.45.csv").status_code == 200
+    assert client.get("/api/reports/ip/49.36.128.45.html").status_code == 200
     csv_response = client.get("/api/reports/sessions.csv")
     assert csv_response.status_code == 200
     assert "case_id" in csv_response.text
+
+    persistence = client.post("/api/persistence/snapshot")
+    assert persistence.status_code == 200
+    assert persistence.json()["sessions"] == 6
+    assert client.get("/api/persistence/status").status_code == 200
 
 
 def test_api_rejects_empty_upload_with_clear_error(tmp_path: Path, monkeypatch) -> None:
