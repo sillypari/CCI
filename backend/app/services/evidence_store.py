@@ -290,6 +290,22 @@ class EvidenceStore:
             self.sessions = []
             
             self.extractions = [ExtractionResult.model_validate(item) for item in payload.get("extractions", [])]
+            
+            # Auto-resolve zombie processing jobs
+            zombies_found = False
+            for job in self.jobs:
+                if job.status == "processing":
+                    job.status = "failed"
+                    job.progress = 100
+                    job.message = "Job interrupted (server restarted)"
+                    job.completed_at = now_ist()
+                    zombies_found = True
+            if zombies_found:
+                # Save changes silently
+                payload["jobs"] = [item.model_dump(mode="json") for item in self.jobs]
+                tmp_path = self.storage_file.with_suffix(".tmp")
+                tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+                tmp_path.replace(self.storage_file)
             self.packages = [RequestPackage.model_validate(item) for item in payload.get("packages", [])]
             self.audit_logs = [AuditLogEntry.model_validate(item) for item in payload.get("audit_logs", [])]
             ranges = payload.get("platform_ranges") or []
@@ -880,7 +896,7 @@ class EvidenceStore:
         result = classify_ip(destination_ip, destination_port, bytes_down, protocol=protocol, duration=duration)
         record_type = "ipdr_nat" if translated_ip or translated_port else "ipdr"
         return SessionRecord(
-            id=f"SES-{uuid.uuid4().hex[:8]}",
+            id=f"SES-{uuid.uuid4().hex}",
             upload_id=upload_id,
             case_id=case_id,
             a_party_msisdn=msisdn,

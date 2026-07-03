@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+# Trigger reload comment to activate SQLite and job cleanup settings
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
