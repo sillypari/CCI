@@ -129,24 +129,37 @@ Infrastructure wiring:
 
 The parser expects delimited records with a header row, JSON records, or Excel workbooks. CSV, TSV, semicolon-delimited, pipe-delimited text, JSON arrays, and XLS/XLSX files are suitable for the current implementation. Upload parsing is handled by Polars; there is no secondary CSV parser fallback.
 
-Recommended columns:
+Required investigation columns:
 
 | Column | Description | Example |
 | --- | --- | --- |
-| `msisdn` | A-party mobile number | `919876543210` |
-| `destination_ip` | Destination public IP observed in IPDR | `49.36.128.45` |
-| `destination_port` | Destination port | `45892` |
+| `msisdn` | A-party mobile number or access identifier alias | `919876543210` |
+| `source_ip` | Subscriber/source IP from IPDR or NAT SYSLOG | `10.12.1.8` |
+| `source_port` | Subscriber/source port | `49152` |
+| `destination_ip` | True B-party destination IP | `49.36.128.45` |
+| `destination_port` | True B-party destination port | `45892` |
+
+Recommended DoT/NAT columns:
+
+| Column | Description | Example |
+| --- | --- | --- |
+| `translated_ip` | NAT translated/public IP. This is not treated as B-party. | `49.37.10.21` |
+| `translated_port` | NAT translated/public port | `45892` |
+| `started_at` or `start_date` + `start_time` | IST session start | `2026-07-03T10:01:00+05:30` |
+| `ended_at` or `end_date` + `end_time` | IST session end | `2026-07-03T10:06:42+05:30` |
+| `ip_allocation` | Static or dynamic allocation | `Dynamic` |
+| `imei`, `imsi`, `sim_type` | Mobile device/SIM identifiers when available | `356789012345678` |
 | `protocol` | Protocol name | `UDP` |
-| `duration_seconds` | Session duration in seconds | `342` |
-| `bytes_up` | Uploaded bytes | `182044` |
-| `bytes_down` | Downloaded bytes | `880122` |
+| `bytes_up` / `bytes_down` | Traffic counters | `182044` / `880122` |
+
+Important: `translated_ip`, `public_ip`, `translated_port`, and `public_port` are parsed as NAT translation fields only. They are never used as the B-party destination unless the upload also contains a real `destination_ip` and `destination_port`.
 
 Example:
 
 ```csv
-msisdn,destination_ip,destination_port,protocol,duration_seconds,bytes_up,bytes_down
-919876543210,49.36.128.45,45892,UDP,342,182044,880122
-919876543210,157.240.16.35,443,TCP,88,12044,42120
+msisdn,source_ip,source_port,translated_ip,translated_port,destination_ip,destination_port,protocol,duration_seconds,bytes_up,bytes_down,started_at
+919876543210,10.12.1.8,49152,49.37.10.21,45892,49.36.128.45,45892,UDP,342,182044,880122,2026-07-03T10:01:00+05:30
+919876543210,10.12.1.8,49153,,,157.240.16.35,443,TCP,88,12044,42120,2026-07-03T10:05:00+05:30
 ```
 
 You can generate a sample file with:

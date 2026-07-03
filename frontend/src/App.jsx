@@ -472,6 +472,8 @@ function SessionsPage({ sessions }) {
         !needle ||
         session.a_party_msisdn.includes(needle) ||
         session.destination_ip.includes(needle) ||
+        (session.source_ip ?? "").includes(needle) ||
+        (session.translated_ip ?? "").includes(needle) ||
         session.operator.toLowerCase().includes(needle);
       return matchesClass && matchesQuery;
     });
@@ -758,6 +760,8 @@ function SessionsTable({ sessions, compact = false }) {
         <thead>
           <tr>
             <th>MSISDN</th>
+            {!compact ? <th>Source</th> : null}
+            {!compact ? <th>NAT</th> : null}
             <th>Destination</th>
             <th>Operator</th>
             <th>Class</th>
@@ -769,13 +773,15 @@ function SessionsTable({ sessions, compact = false }) {
           {sessions.length ? sessions.map((session) => (
             <tr key={session.id}>
               <td className="mono">{session.a_party_msisdn}</td>
-              <td><span className="mono">{session.destination_ip}:{session.destination_port}</span></td>
+              {!compact ? <td className="mono">{formatEndpoint(session.source_ip, session.source_port)}</td> : null}
+              {!compact ? <td className="mono">{formatEndpoint(session.translated_ip, session.translated_port)}</td> : null}
+              <td><span className="mono">{formatEndpoint(session.destination_ip, session.destination_port)}</span></td>
               <td>{session.operator}</td>
               <td><Badge tone={toneForClass(session.classification)}>{session.classification}</Badge></td>
               {!compact ? <td className="mono">{date(session.started_at)}</td> : null}
               <td>{Math.round(session.confidence * 100)}%</td>
             </tr>
-          )) : <TableEmptyRow colSpan={compact ? 5 : 6} label="No normalized sessions found" />}
+          )) : <TableEmptyRow colSpan={compact ? 5 : 8} label="No normalized sessions found" />}
         </tbody>
       </table>
     </div>
@@ -794,6 +800,8 @@ function ExtractionResultView({ extraction }) {
         <table>
           <thead>
             <tr>
+              <th>Source</th>
+              <th>NAT</th>
               <th>Destination</th>
               <th>Operator</th>
               <th>Class</th>
@@ -804,13 +812,15 @@ function ExtractionResultView({ extraction }) {
           <tbody>
             {extraction.candidates.length ? extraction.candidates.map((candidate) => (
               <tr key={`${candidate.session_id}-${candidate.destination_ip}`}>
-                <td className="mono">{candidate.destination_ip}:{candidate.destination_port}</td>
+                <td className="mono">{formatEndpoint(candidate.source_ip, candidate.source_port)}</td>
+                <td className="mono">{formatEndpoint(candidate.translated_ip, candidate.translated_port)}</td>
+                <td className="mono">{formatEndpoint(candidate.destination_ip, candidate.destination_port)}</td>
                 <td>{candidate.target_operator}</td>
                 <td><Badge tone={toneForClass(candidate.classification)}>{candidate.classification}</Badge></td>
                 <td>{candidate.evidence}</td>
                 <td>{Math.round(candidate.confidence * 100)}%</td>
               </tr>
-            )) : <TableEmptyRow colSpan={5} label="No candidates met the confidence threshold" />}
+            )) : <TableEmptyRow colSpan={7} label="No candidates met the confidence threshold" />}
           </tbody>
         </table>
       </div>
@@ -1265,7 +1275,8 @@ function GraphEdgeInspector({ link }) {
         {link.sessions.slice(0, 4).map((session) => (
           <div key={session.id}>
             <strong>{session.operator}</strong>
-            <span className="mono">{session.destination_ip}:{session.destination_port}</span>
+            <span className="mono">Dst {formatEndpoint(session.destination_ip, session.destination_port)}</span>
+            <small>{formatEndpoint(session.source_ip, session.source_port)}{session.translated_ip ? ` via ${formatEndpoint(session.translated_ip, session.translated_port)}` : ""}</small>
             <small>{session.source_file} row {session.row_number}</small>
           </div>
         ))}
@@ -1305,6 +1316,11 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function formatEndpoint(ip, port) {
+  if (!ip) return "-";
+  return port ? `${ip}:${port}` : ip;
+}
+
 function formatDuration(seconds) {
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
@@ -1313,11 +1329,14 @@ function formatDuration(seconds) {
 }
 function RequestPackageCard({ item }) {
   const details = [
-    ["IP Address", item.payload.destination_ip],
-    ["Port", item.payload.destination_port],
+    ["Source", formatEndpoint(item.payload.source_ip, item.payload.source_port)],
+    ["NAT", formatEndpoint(item.payload.translated_ip, item.payload.translated_port)],
+    ["Destination", formatEndpoint(item.payload.destination_ip, item.payload.destination_port)],
     ["Protocol", item.payload.protocol],
-    ["Timestamp", item.payload.timestamp_ist],
+    ["Started", item.payload.timestamp_ist],
+    ["Ended", item.payload.end_timestamp_ist ?? "-"],
     ["Duration", `${item.payload.duration_seconds}s`],
+    ["Record", item.payload.record_type ?? "ipdr"],
     ["Confidence", `${Math.round(item.payload.confidence * 100)}%`]
   ];
 
@@ -1378,10 +1397,10 @@ function RangesTable({ ranges }) {
 function AdaptersPanel() {
   return (
     <div className="adapter-grid">
-      {["Airtel", "Jio", "Vodafone Idea", "BSNL", "Generic"].map((name) => (
+      {["DoT IPDR", "NAT SYSLOG", "Airtel", "Jio", "Vodafone Idea", "BSNL", "Generic"].map((name) => (
         <div className="adapter-tile" key={name}>
           <strong>{name}</strong>
-          <span>msisdn, destination_ip, destination_port, duration_seconds</span>
+          <span>msisdn, source_ip:port, translated_ip:port, destination_ip:port</span>
           <Badge tone="success">loaded</Badge>
         </div>
       ))}

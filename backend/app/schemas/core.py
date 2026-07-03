@@ -46,13 +46,33 @@ class SessionRecord(BaseModel):
     id: str
     upload_id: str
     a_party_msisdn: str
+    subscriber_name: str | None = None
+    subscriber_address: str | None = None
+    contact_number: str | None = None
+    alternate_contact_number: str | None = None
+    email: str | None = None
+    access_identifier: str | None = None
+    user_id: str | None = None
+    source_ip: str | None = None
+    source_port: int | None = None
+    translated_ip: str | None = None
+    translated_port: int | None = None
     destination_ip: str
     destination_port: int
+    ip_allocation: str | None = None
     protocol: str
     started_at: datetime
+    ended_at: datetime | None = None
     duration_seconds: int
     bytes_up: int
     bytes_down: int
+    source_mac: str | None = None
+    imei: str | None = None
+    device_id: str | None = None
+    tmsi: str | None = None
+    imsi: str | None = None
+    sim_type: str | None = None
+    record_type: Literal["ipdr", "nat_syslog", "ipdr_nat"] = "ipdr"
     app_hint: str
     operator: str
     asn: str
@@ -137,6 +157,10 @@ class ExtractionRequest(BaseModel):
 
 class ExtractionCandidate(BaseModel):
     session_id: str
+    source_ip: str | None = None
+    source_port: int | None = None
+    translated_ip: str | None = None
+    translated_port: int | None = None
     destination_ip: str
     destination_port: int
     target_operator: str

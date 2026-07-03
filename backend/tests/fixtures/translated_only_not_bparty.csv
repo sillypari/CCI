@@ -1,0 +1,2 @@
+msisdn,source_ip,source_port,translated_ip,translated_port,destination_port,started_at
+919876543210,10.12.1.8,49152,49.37.10.21,45892,45892,2026-07-03T10:01:00+05:30

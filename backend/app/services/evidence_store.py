@@ -46,32 +46,116 @@ COLUMN_ALIASES = {
         "calling_number",
         "calling_party",
         "mobile_number",
+        "mdn",
+        "landline_msisdn_mdn_leased_circuit_id",
+        "landline_msisdn_mdn_leased_circuit_id_for_internet_access",
+        "access_identifier",
+    ),
+    "subscriber_name": ("subscriber_name", "customer_name", "name_of_person_organization", "name_of_person_or_organization", "name"),
+    "subscriber_address": ("subscriber_address", "customer_address", "address"),
+    "contact_number": ("contact_number", "contact_no", "contact"),
+    "alternate_contact_number": ("alternate_contact_number", "alternate_contact_no", "alternate_contact"),
+    "email": ("email", "email_address", "e_mail_address"),
+    "access_identifier": ("access_identifier", "landline_msisdn_mdn_leased_circuit_id", "leased_circuit_id", "circuit_id", "mdn"),
+    "user_id": ("user_id", "user_id_for_internet_access", "internet_user_id", "authentication_user_id"),
+    "source_ip": (
+        "source_ip",
+        "source_ip_address",
+        "src_ip",
+        "src_address",
+        "private_ip",
+        "subscriber_ip",
+        "user_ip",
+        "allocated_ip",
+        "allocated_ip_address",
+        "ip_address_allocated",
+        "assigned_ip",
+        "source_endpoint",
+        "source_ip_port",
+        "source_ip_address_with_source_port",
+    ),
+    "source_port": (
+        "source_port",
+        "source_port_no",
+        "source_port_number",
+        "src_port",
+        "private_port",
+        "subscriber_port",
+        "user_port",
+        "source_endpoint",
+        "source_ip_port",
+        "source_ip_address_with_source_port",
+    ),
+    "translated_ip": (
+        "translated_ip",
+        "translated_ip_address",
+        "translated_public_ip",
+        "public_ip",
+        "public_ip_address",
+        "nat_ip",
+        "nat_public_ip",
+        "mapped_ip",
+        "mapped_public_ip",
+        "translated_endpoint",
+        "nat_endpoint",
+    ),
+    "translated_port": (
+        "translated_port",
+        "translated_port_no",
+        "translated_port_number",
+        "public_port",
+        "nat_port",
+        "mapped_port",
+        "translated_endpoint",
+        "nat_endpoint",
     ),
     "destination_ip": (
         "destination_ip",
+        "destination_ip_address",
         "dest_ip",
+        "dst_ip",
+        "dst_addr",
         "server_ip",
         "b_party_ip",
         "b_party_public_ip",
         "remote_ip",
         "remote_address",
-        "public_ip",
-        "translated_ip",
+        "peer_ip",
+        "destination_endpoint",
+        "destination_ip_port",
+        "destination_ip_with_destination_port",
     ),
     "destination_port": (
         "destination_port",
+        "destination_port_no",
+        "destination_port_number",
         "dest_port",
+        "dst_port",
         "server_port",
         "b_party_port",
         "remote_port",
-        "public_port",
-        "translated_port",
+        "peer_port",
+        "destination_endpoint",
+        "destination_ip_port",
+        "destination_ip_with_destination_port",
     ),
+    "ip_allocation": ("ip_allocation", "static_dynamic_ip_address_allocation", "allocation_type", "ip_address_allocation"),
     "duration_seconds": ("duration_seconds", "duration", "session_duration", "duration_sec", "duration_s"),
     "bytes_up": ("bytes_up", "uplink_bytes", "upload_bytes", "tx_bytes", "bytes_sent", "sent_bytes"),
     "bytes_down": ("bytes_down", "downlink_bytes", "download_bytes", "rx_bytes", "bytes_received", "received_bytes"),
     "protocol": ("protocol", "ip_protocol", "proto"),
-    "started_at": ("started_at", "start_time", "timestamp", "session_start", "date_time", "datetime"),
+    "started_at": ("started_at", "start_datetime", "start_date_time", "timestamp", "session_start", "date_time", "datetime"),
+    "start_date": ("start_date", "ist_start_date", "start_date_of_ip_address_allocation"),
+    "start_time": ("start_time", "ist_start_time", "start_time_of_ip_address_allocation"),
+    "ended_at": ("ended_at", "end_datetime", "end_date_time", "session_end"),
+    "end_date": ("end_date", "ist_end_date", "end_date_of_ip_address_allocation"),
+    "end_time": ("end_time", "ist_end_time", "end_time_of_ip_address_allocation"),
+    "source_mac": ("source_mac", "source_mac_address", "mac_address", "customer_device_mac"),
+    "imei": ("imei", "imei_number"),
+    "device_id": ("device_id", "device_identification_number", "other_device_identification_number"),
+    "tmsi": ("tmsi",),
+    "imsi": ("imsi",),
+    "sim_type": ("sim_type", "type_of_sim"),
 }
 
 
@@ -268,25 +352,50 @@ class EvidenceStore:
     def _session_from_row(self, upload_id: str, filename: str, row_number: int, row: dict[str, Any]) -> SessionRecord:
         normalized = {self._normalize_key(str(key)): self._clean_value(value) for key, value in row.items() if key is not None}
         msisdn = self._parse_msisdn(self._first(normalized, "msisdn"), "msisdn")
-        destination_ip = self._parse_ip(self._first(normalized, "destination_ip"))
-        destination_port = self._parse_int(self._first(normalized, "destination_port"), "destination_port", minimum=1, maximum=65535)
+        source_ip, source_port = self._parse_endpoint(normalized, "source_ip", "source_port", "source")
+        destination_ip, destination_port = self._parse_endpoint(normalized, "destination_ip", "destination_port", "destination")
+        translated_ip, translated_port = self._parse_optional_endpoint(normalized, "translated_ip", "translated_port", "translated")
         duration = self._parse_int(self._optional(normalized, "duration_seconds") or "0", "duration_seconds", minimum=0)
         bytes_up = self._parse_int(self._optional(normalized, "bytes_up") or "0", "bytes_up", minimum=0)
         bytes_down = self._parse_int(self._optional(normalized, "bytes_down") or "0", "bytes_down", minimum=0)
         protocol = self._parse_protocol(self._optional(normalized, "protocol") or "UDP")
-        started_at = self._parse_timestamp(self._optional(normalized, "started_at"), row_number)
+        started_at = self._timestamp_from_row(normalized, "started", row_number, required=True)
+        ended_at = self._timestamp_from_row(normalized, "ended", row_number, required=False)
+        if duration == 0 and ended_at is not None and ended_at >= started_at:
+            duration = int((ended_at - started_at).total_seconds())
         result = classify_ip(destination_ip, destination_port, bytes_down)
+        record_type = "ipdr_nat" if translated_ip or translated_port else "ipdr"
         return SessionRecord(
             id=f"SES-{uuid.uuid4().hex[:8]}",
             upload_id=upload_id,
             a_party_msisdn=msisdn,
+            subscriber_name=self._optional(normalized, "subscriber_name"),
+            subscriber_address=self._optional(normalized, "subscriber_address"),
+            contact_number=self._optional(normalized, "contact_number"),
+            alternate_contact_number=self._optional(normalized, "alternate_contact_number"),
+            email=self._optional(normalized, "email"),
+            access_identifier=self._optional(normalized, "access_identifier"),
+            user_id=self._optional(normalized, "user_id"),
+            source_ip=source_ip,
+            source_port=source_port,
+            translated_ip=translated_ip,
+            translated_port=translated_port,
             destination_ip=destination_ip,
             destination_port=destination_port,
+            ip_allocation=self._optional(normalized, "ip_allocation"),
             protocol=protocol,
             started_at=started_at,
+            ended_at=ended_at,
             duration_seconds=duration,
             bytes_up=bytes_up,
             bytes_down=bytes_down,
+            source_mac=self._optional(normalized, "source_mac"),
+            imei=self._optional(normalized, "imei"),
+            device_id=self._optional(normalized, "device_id"),
+            tmsi=self._optional(normalized, "tmsi"),
+            imsi=self._optional(normalized, "imsi"),
+            sim_type=self._optional(normalized, "sim_type"),
+            record_type=record_type,
             app_hint=result.app_hint,
             operator=result.operator,
             asn=result.asn,
@@ -318,17 +427,69 @@ class EvidenceStore:
                 return value
         return None
 
+    def _parse_endpoint(self, row: dict[str, str], ip_canonical: str, port_canonical: str, field_prefix: str) -> tuple[str, int]:
+        ip_value = self._first(row, ip_canonical)
+        port_value = self._first(row, port_canonical)
+        ip_part, port_part = self._split_endpoint(ip_value)
+        if port_part is None:
+            _, port_part = self._split_endpoint(port_value)
+        return (
+            self._parse_ip(ip_part, f"{field_prefix}_ip"),
+            self._parse_int(port_part or port_value, f"{field_prefix}_port", minimum=1, maximum=65535),
+        )
+
+    def _parse_optional_endpoint(self, row: dict[str, str], ip_canonical: str, port_canonical: str, field_prefix: str) -> tuple[str | None, int | None]:
+        ip_value = self._optional(row, ip_canonical)
+        port_value = self._optional(row, port_canonical)
+        if not ip_value and not port_value:
+            return None, None
+        if not ip_value or not port_value:
+            raise RowValidationError(field_prefix, f"Both {field_prefix}_ip and {field_prefix}_port are required when NAT translation is present")
+        ip_part, port_part = self._split_endpoint(ip_value)
+        if port_part is None:
+            _, port_part = self._split_endpoint(port_value)
+        return (
+            self._parse_ip(ip_part, f"{field_prefix}_ip"),
+            self._parse_int(port_part or port_value, f"{field_prefix}_port", minimum=1, maximum=65535),
+        )
+
+    def _split_endpoint(self, value: str) -> tuple[str, str | None]:
+        cleaned = value.strip()
+        if not cleaned:
+            return cleaned, None
+        if cleaned.startswith("[") and "]:" in cleaned:
+            host, port = cleaned.rsplit(":", 1)
+            return host.strip("[]"), port
+        if cleaned.count(":") == 1:
+            host, port = cleaned.rsplit(":", 1)
+            if port.isdigit():
+                return host, port
+        return cleaned, None
+
+    def _timestamp_from_row(self, row: dict[str, str], prefix: str, row_number: int, required: bool) -> datetime | None:
+        canonical = "started_at" if prefix == "started" else "ended_at"
+        combined = self._optional(row, canonical)
+        if combined:
+            return self._parse_timestamp(combined, row_number, required=required, field=canonical)
+        date_value = self._optional(row, "start_date" if prefix == "started" else "end_date")
+        time_value = self._optional(row, "start_time" if prefix == "started" else "end_time")
+        if date_value and time_value:
+            return self._parse_timestamp(f"{date_value} {time_value}", row_number, required=required, field=canonical)
+        if required:
+            return now_ist() - timedelta(minutes=5 + row_number)
+        return None
+
     def _parse_msisdn(self, value: str, field: str) -> str:
         digits = re.sub(r"\D", "", value)
         if len(digits) < 4 or len(digits) > 15:
             raise RowValidationError(field, "MSISDN must contain 4 to 15 digits")
         return digits
 
-    def _parse_ip(self, value: str) -> str:
+    def _parse_ip(self, value: str, field: str) -> str:
         try:
             return str(ipaddress.ip_address(value))
         except ValueError as exc:
-            raise RowValidationError("destination_ip", f"Invalid destination IP: {value}") from exc
+            raise RowValidationError(field, f"Invalid {field}: {value}") from exc
 
     def _parse_int(self, value: str, field: str, minimum: int = 0, maximum: int | None = None) -> int:
         try:
@@ -349,21 +510,30 @@ class EvidenceStore:
             raise RowValidationError("protocol", "Protocol contains unsupported characters")
         return cleaned
 
-    def _parse_timestamp(self, value: str | None, row_number: int) -> datetime:
+    def _parse_timestamp(self, value: str | None, row_number: int, required: bool = True, field: str = "started_at") -> datetime | None:
         if not value:
-            return now_ist() - timedelta(minutes=5 + row_number)
+            return now_ist() - timedelta(minutes=5 + row_number) if required else None
         candidate = value.replace("Z", "+00:00")
         try:
             parsed = datetime.fromisoformat(candidate)
         except ValueError:
-            for fmt in ("%Y-%m-%d %H:%M:%S", "%d-%m-%Y %H:%M:%S", "%d/%m/%Y %H:%M:%S", "%Y/%m/%d %H:%M:%S"):
+            parsed = None
+            for fmt in (
+                "%Y-%m-%d %H:%M:%S",
+                "%d-%m-%Y %H:%M:%S",
+                "%d/%m/%Y %H:%M:%S",
+                "%m/%d/%Y %H:%M:%S",
+                "%m:%d:%Y %H:%M:%S",
+                "%Y/%m/%d %H:%M:%S",
+                "%d.%m.%Y %H:%M:%S",
+            ):
                 try:
                     parsed = datetime.strptime(value, fmt)
                     break
                 except ValueError:
-                    parsed = None
+                    continue
             if parsed is None:
-                raise RowValidationError("started_at", f"Unsupported timestamp format: {value}")
+                raise RowValidationError(field, f"Unsupported timestamp format: {value}")
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=IST)
         return parsed.astimezone(IST)
@@ -395,6 +565,8 @@ class EvidenceStore:
                 for session in sessions
                 if needle in session.a_party_msisdn.lower()
                 or needle in session.destination_ip.lower()
+                or needle in (session.source_ip or "").lower()
+                or needle in (session.translated_ip or "").lower()
                 or needle in session.operator.lower()
                 or needle in session.source_file.lower()
             ]
@@ -412,6 +584,10 @@ class EvidenceStore:
         candidates = [
             ExtractionCandidate(
                 session_id=session.id,
+                source_ip=session.source_ip,
+                source_port=session.source_port,
+                translated_ip=session.translated_ip,
+                translated_port=session.translated_port,
                 destination_ip=session.destination_ip,
                 destination_port=session.destination_port,
                 target_operator=session.operator,
@@ -455,13 +631,28 @@ class EvidenceStore:
             payload={
                 "requesting_unit": "Cyber investigation unit",
                 "a_party_msisdn": extraction.requested_msisdn,
+                "source_ip": session.source_ip,
+                "source_port": session.source_port,
+                "translated_ip": session.translated_ip,
+                "translated_port": session.translated_port,
                 "destination_ip": session.destination_ip,
                 "destination_port": session.destination_port,
                 "protocol": session.protocol,
                 "timestamp_ist": session.started_at.isoformat(),
+                "end_timestamp_ist": session.ended_at.isoformat() if session.ended_at else None,
                 "duration_seconds": session.duration_seconds,
+                "ip_allocation": session.ip_allocation,
+                "record_type": session.record_type,
                 "classification": session.classification,
                 "confidence": session.confidence,
+                "subscriber_context": {
+                    "access_identifier": session.access_identifier,
+                    "user_id": session.user_id,
+                    "contact_number": session.contact_number,
+                    "imei": session.imei,
+                    "imsi": session.imsi,
+                    "sim_type": session.sim_type,
+                },
                 "evidence_chain": {
                     "source_file": session.source_file,
                     "row_number": session.row_number,
@@ -741,7 +932,13 @@ class EvidenceStore:
             uploads = list(self.uploads)
             packages = list(self.packages)
         for session in sessions:
-            if needle in session.a_party_msisdn.lower() or needle in session.destination_ip.lower() or needle in session.operator.lower():
+            if (
+                needle in session.a_party_msisdn.lower()
+                or needle in session.destination_ip.lower()
+                or needle in (session.source_ip or "").lower()
+                or needle in (session.translated_ip or "").lower()
+                or needle in session.operator.lower()
+            ):
                 results.append(
                     SearchResult(
                         type="session",

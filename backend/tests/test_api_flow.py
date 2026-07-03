@@ -24,15 +24,21 @@ def test_upload_extract_and_quarantine_api_flow(tmp_path: Path, monkeypatch) -> 
     upload = upload_response.json()
     assert upload["rows_valid"] == 6
     assert upload["format_report"]["parser_engine"] == "polars"
+    assert upload["format_report"]["missing_required"] == []
 
     sessions = client.get("/api/sessions", params={"msisdn": "919876543210", "classification": "p2p"})
     assert sessions.status_code == 200
-    assert len(sessions.json()) == 2
+    session_payload = sessions.json()
+    assert len(session_payload) == 2
+    assert all(item["source_ip"] for item in session_payload)
+    assert all(item["destination_ip"] != item.get("translated_ip") for item in session_payload if item.get("translated_ip"))
 
     graph = client.get("/api/graph", params={"msisdn": "919876543210"})
     assert graph.status_code == 200
-    assert graph.json()["metrics"]["sessions"] == 3
-    assert graph.json()["links"]
+    graph_payload = graph.json()
+    assert graph_payload["metrics"]["sessions"] == 3
+    assert graph_payload["links"]
+    assert {link["target_id"] for link in graph_payload["links"]} == {"49.36.128.45", "157.240.16.35", "106.205.44.12"}
 
     patterns = client.get("/api/analytics/patterns")
     assert patterns.status_code == 200
@@ -40,7 +46,9 @@ def test_upload_extract_and_quarantine_api_flow(tmp_path: Path, monkeypatch) -> 
 
     extraction = client.post("/api/extract", json={"msisdn": "919876543210", "depth": 1, "min_confidence": 0.65})
     assert extraction.status_code == 200
-    assert extraction.json()["actionable_count"] == 2
+    extraction_payload = extraction.json()
+    assert extraction_payload["actionable_count"] == 2
+    assert any(candidate["source_ip"] for candidate in extraction_payload["candidates"])
 
     packages = client.get("/api/packages")
     assert packages.status_code == 200
