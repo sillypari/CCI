@@ -1,0 +1,16 @@
+.env
+.agents/
+.codex/
+.venv/
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+uploads/
+backend/uploads/
+backend/sample_ipdr.csv
+logs/
+node_modules/
+dist/
+.vite/
+*.log
