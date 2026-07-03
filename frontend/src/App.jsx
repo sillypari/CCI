@@ -1,5 +1,10 @@
 import { useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 import { NavLink, Route, Routes, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { PanelHeader, Badge, EmptyState, number, Modal } from "./components/common.jsx";
+import { GeoMap } from "./components/GeoMap.jsx";
+import { PoIPage } from "./components/PoIPage.jsx";
+import { IpPage } from "./components/IpPage.jsx";
+import { ImeiPage } from "./components/ImeiPage.jsx";
 import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation } from "d3-force";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -31,8 +36,10 @@ import {
   Server,
   Settings,
   ShieldCheck,
+  Smartphone,
   Target,
   Upload,
+  Trash2,
   X,
   ZoomIn,
   ZoomOut
@@ -55,6 +62,7 @@ const navItems = [
   { icon: Network, label: "Communication Map", path: "/map" },
   { icon: BarChart3, label: "Analytics", path: "/analytics" },
   { icon: FileSpreadsheet, label: "Reports", path: "/reports" },
+  { icon: Smartphone, label: "IMEI Analysis", path: "/imei" },
   { icon: FileText, label: "Request Packages", path: "/packages" },
   { icon: Clipboard, label: "Audit Log", path: "/audit" },
   { icon: Settings, label: "Settings", path: "/settings" }
@@ -171,6 +179,36 @@ function App() {
     [pushToast, refresh]
   );
 
+  const deleteUpload = useCallback(
+    async (upload) => {
+      try {
+        const deleted = await api.deleteUpload(upload.id);
+        await refresh();
+        pushToast("success", "Upload deleted", `${deleted.filename} and ${deleted.rows_valid} sessions removed`);
+        return true;
+      } catch (error) {
+        pushToast("error", "Delete failed", error.message);
+        return false;
+      }
+    },
+    [pushToast, refresh]
+  );
+
+  const deleteCase = useCallback(
+    async (caseItem) => {
+      try {
+        const deleted = await api.deleteCase(caseItem.id);
+        await refresh();
+        pushToast("success", "Case deleted", deleted.name);
+        return true;
+      } catch (error) {
+        pushToast("error", "Delete failed", error.message);
+        return false;
+      }
+    },
+    [pushToast, refresh]
+  );
+
   const validateFile = useCallback(
     async (file, options = {}) => {
       try {
@@ -263,12 +301,15 @@ function App() {
         <AnimatePresence mode="wait">
           <Routes>
             <Route path="/" element={<DashboardPage data={data} />} />
-            <Route path="/cases" element={<CasesPage cases={data.cases} stats={data.stats} createCase={createCase} />} />
-            <Route path="/uploads" element={<UploadsPage uploads={data.uploads} jobs={data.jobs} cases={data.cases} importSpecs={data.importSpecs} uploadFile={uploadFile} validateFile={validateFile} />} />
+            <Route path="/cases" element={<CasesPage cases={data.cases} stats={data.stats} createCase={createCase} deleteCase={deleteCase} />} />
+            <Route path="/uploads" element={<UploadsPage uploads={data.uploads} jobs={data.jobs} cases={data.cases} importSpecs={data.importSpecs} uploadFile={uploadFile} validateFile={validateFile} deleteUpload={deleteUpload} />} />
             <Route path="/sessions" element={<SessionsPage sessions={data.sessions} />} />
             <Route path="/extractions" element={<ExtractionsPage extractions={data.extractions} runExtraction={runExtraction} />} />
             <Route path="/map" element={<MapPage initialGraph={data.graph} runExtraction={runExtraction} />} />
             <Route path="/analytics" element={<AnalyticsPage timeline={data.timeline} applications={data.applications} patterns={data.patterns} />} />
+            <Route path="/poi/:msisdn" element={<PoIPage />} />
+            <Route path="/ip/:ip" element={<IpPage />} />
+            <Route path="/imei" element={<ImeiPage />} />
             <Route path="/reports" element={<ReportsPage sessions={data.sessions} />} />
             <Route path="/packages" element={<PackagesPage packagesList={data.packages} />} />
             <Route path="/audit" element={<AuditPage auditLogs={data.auditLogs} />} />
@@ -293,8 +334,15 @@ function Shell({ apiLive, apiError, children }) {
 
   const submitSearch = (event) => {
     event.preventDefault();
-    if (query.trim()) {
-      navigate(`/sessions?q=${encodeURIComponent(query.trim())}`);
+    const q = query.trim();
+    if (q) {
+      if (/^\d{10,15}$/.test(q)) {
+        navigate(`/poi/${q}`);
+      } else if (/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(q)) {
+        navigate(`/ip/${q}`);
+      } else {
+        navigate(`/sessions?q=${encodeURIComponent(q)}`);
+      }
     }
   };
 
@@ -455,7 +503,7 @@ function SignalList({ patterns }) {
     </div>
   );
 }
-function CasesPage({ cases, stats, createCase }) {
+function CasesPage({ cases, stats, createCase, deleteCase }) {
   const [form, setForm] = useState({ name: "", crime_type: "Cybercrime", io_name: "", targets: "", tags: "" });
 
   const submit = async (event) => {
@@ -496,7 +544,7 @@ function CasesPage({ cases, stats, createCase }) {
         <PanelHeader icon={Database} title="Case List" action={<Badge tone="brand">{cases.length}</Badge>} />
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Case</th><th>Crime</th><th>IO</th><th>Targets</th><th>Status</th></tr></thead>
+            <thead><tr><th>Case</th><th>Crime</th><th>IO</th><th>Targets</th><th>Status</th><th>Action</th></tr></thead>
             <tbody>
               {cases.length ? cases.map((item) => (
                 <tr key={item.id}>
@@ -505,8 +553,27 @@ function CasesPage({ cases, stats, createCase }) {
                   <td>{item.io_name}</td>
                   <td className="mono">{(item.targets ?? []).join(", ") || "-"}</td>
                   <td><Badge tone={item.status === "active" ? "success" : "neutral"}>{item.status}</Badge></td>
+                  <td>
+                    {item.id !== "CASE-GENERAL" ? (
+                      <button
+                        type="button"
+                        className="icon-button danger"
+                        onClick={() => {
+                          if (window.confirm(`Are you sure you want to permanently delete case ${item.name}? Any uploads in this case will be moved back to the General Evidence Intake.`)) {
+                            deleteCase(item);
+                          }
+                        }}
+                        title="Delete Case"
+                        style={{ background: 'transparent', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    ) : (
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Protected</span>
+                    )}
+                  </td>
                 </tr>
-              )) : <TableEmptyRow colSpan={5} label="No cases created" />}
+              )) : <TableEmptyRow colSpan={6} label="No cases created" />}
             </tbody>
           </table>
         </div>
@@ -514,9 +581,10 @@ function CasesPage({ cases, stats, createCase }) {
     </motion.section>
   );
 }
-function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadFile, validateFile }) {
+function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadFile, validateFile, deleteUpload }) {
   const [activeFile, setActiveFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [selectedQuarantine, setSelectedQuarantine] = useState(null);
   const [validationReport, setValidationReport] = useState(null);
   const [validating, setValidating] = useState(false);
   const fileInputId = useId();
@@ -627,9 +695,8 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
                 <th>File</th>
                 <th>Status</th>
                 <th>Rows</th>
-                <th>Format</th>
                 <th>Adapter</th>
-                <th>Progress</th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -637,12 +704,39 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
                 <tr key={upload.id}>
                   <td>{upload.filename}</td>
                   <td><Badge tone={upload.status === "completed" ? "success" : upload.status === "failed" ? "danger" : "warning"}>{upload.status}</Badge></td>
-                  <td>{number(upload.rows_valid)} / {number(upload.rows_total)}</td>
-                  <td><span className="mono">{upload.format_report?.file_format ?? "-"}</span></td>
-                  <td>{upload.format_report?.adapter ?? "-"}</td>
-                  <td><Progress value={upload.progress} /></td>
+                  <td>
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                      <span>{number(upload.rows_valid)} / {number(upload.rows_total)}</span>
+                      {upload.rows_quarantined > 0 && (
+                        <div onClick={() => setSelectedQuarantine(upload.quarantine_errors || [])} style={{ cursor: "pointer" }}>
+                          <Badge tone="warning" title="Click to review quarantined rows">{upload.rows_quarantined} Q</Badge>
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                  <td>
+                    <span style={{ fontSize: '13px' }}>
+                      {upload.format_report?.adapter ?? "-"} 
+                      {upload.format_report?.file_format ? ` (${upload.format_report.file_format.toUpperCase()})` : ""}
+                    </span>
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="icon-button danger"
+                      onClick={() => {
+                        if (window.confirm(`Are you sure you want to delete ${upload.filename} and remove all its sessions?`)) {
+                          deleteUpload(upload);
+                        }
+                      }}
+                      title="Permanently Delete Upload"
+                      style={{ background: 'transparent', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </td>
                 </tr>
-              )) : <TableEmptyRow colSpan={6} label="No evidence files uploaded" />}
+              )) : <TableEmptyRow colSpan={5} label="No evidence files uploaded" />}
             </tbody>
           </table>
         </div>
@@ -661,7 +755,31 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
           </div>
         </div>
       </section>
-    </motion.section>
+          {selectedQuarantine ? (
+        <Modal title="Quarantine Review" onClose={() => setSelectedQuarantine(null)}>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Row</th>
+                  <th>Field</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {selectedQuarantine.map((err, i) => (
+                  <tr key={i}>
+                    <td>{err.row_number}</td>
+                    <td>{err.field ?? "-"}</td>
+                    <td>{err.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Modal>
+      ) : null}
+</motion.section>
   );
 }
 
@@ -684,11 +802,27 @@ function SessionsPage({ sessions }) {
   const [query, setQuery] = useState(params.get("q") ?? "");
   const [classification, setClassification] = useState("all");
   const deferredQuery = useDeferredValue(query);
+  
+  // Advanced filters state
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [targetIp, setTargetIp] = useState("");
+  const [app, setApp] = useState("");
+  const [domain, setDomain] = useState("");
+  const [cellId, setCellId] = useState("");
+  const [imei, setImei] = useState("");
+  
+  // Date time filtration state
+  const [timeMode, setTimeMode] = useState("serial"); // "serial" or "parallel"
+  const [serialRange, setSerialRange] = useState({ from: "", to: "" });
+  const [parallelRanges, setParallelRanges] = useState([{ from: "", to: "", id: 1 }]);
 
   const filtered = useMemo(() => {
     const needle = deferredQuery.trim().toLowerCase();
     return sessions.filter((session) => {
+      // 1. Classification
       const matchesClass = classification === "all" || session.classification === classification;
+      
+      // 2. Search Query (MSISDN, IP, operator)
       const matchesQuery =
         !needle ||
         session.a_party_msisdn.includes(needle) ||
@@ -696,19 +830,74 @@ function SessionsPage({ sessions }) {
         (session.source_ip ?? "").includes(needle) ||
         (session.translated_ip ?? "").includes(needle) ||
         session.operator.toLowerCase().includes(needle);
-      return matchesClass && matchesQuery;
+
+      // 3. Target IP
+      const matchesTargetIp = !targetIp.trim() || session.destination_ip.includes(targetIp.trim());
+
+      // 4. Application
+      const matchesApp = !app.trim() || (session.app_hint || "").toLowerCase().includes(app.trim().toLowerCase()) || (session.operator || "").toLowerCase().includes(app.trim().toLowerCase());
+
+      // 5. Domain
+      const matchesDomain = !domain.trim() || (session.domain || "").toLowerCase().includes(domain.trim().toLowerCase());
+
+      // 6. Cell Tower
+      const matchesCellId = !cellId.trim() || (session.cell_id || "").toLowerCase().includes(cellId.trim().toLowerCase());
+
+      // 7. IMEI
+      const matchesImei = !imei.trim() || (session.imei || "").toLowerCase().includes(imei.trim().toLowerCase());
+
+      // 8. Date-Time filtration
+      let matchesTime = true;
+      const sessionTime = session.started_at ? new Date(session.started_at).getTime() : null;
+
+      if (sessionTime) {
+        if (timeMode === "serial") {
+          const fromTime = serialRange.from ? new Date(serialRange.from).getTime() : null;
+          const toTime = serialRange.to ? new Date(serialRange.to).getTime() : null;
+          if (fromTime && sessionTime < fromTime) matchesTime = false;
+          if (toTime && sessionTime > toTime) matchesTime = false;
+        } else {
+          // Parallel Mode: matches if it falls in ANY of the ranges (OR logic)
+          let inAnyRange = false;
+          let hasActiveRanges = false;
+          for (const range of parallelRanges) {
+            const fromTime = range.from ? new Date(range.from).getTime() : null;
+            const toTime = range.to ? new Date(range.to).getTime() : null;
+            if (fromTime || toTime) {
+              hasActiveRanges = true;
+              let inThisRange = true;
+              if (fromTime && sessionTime < fromTime) inThisRange = false;
+              if (toTime && sessionTime > toTime) inThisRange = false;
+              if (inThisRange) {
+                inAnyRange = true;
+                break;
+              }
+            }
+          }
+          if (hasActiveRanges && !inAnyRange) {
+            matchesTime = false;
+          }
+        }
+      } else if (serialRange.from || serialRange.to || parallelRanges.some(r => r.from || r.to)) {
+        // Session has no timestamp but we are filtering by timestamp
+        matchesTime = false;
+      }
+
+      return matchesClass && matchesQuery && matchesTargetIp && matchesApp && matchesDomain && matchesCellId && matchesImei && matchesTime;
     });
-  }, [classification, deferredQuery, sessions]);
+  }, [classification, deferredQuery, sessions, targetIp, app, domain, cellId, imei, timeMode, serialRange, parallelRanges]);
 
   return (
     <motion.section {...pageMotion} className="page-grid">
       <section className="panel span-12">
         <PanelHeader icon={Database} title="Session Explorer" action={<Badge tone="brand">{number(filtered.length)} rows</Badge>} />
+        
         <div className="toolbar">
           <label className="input-shell">
             <Search size={16} />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="MSISDN, IP, operator" />
           </label>
+          
           <SelectControl
             ariaLabel="Session classification filter"
             icon={Filter}
@@ -721,7 +910,144 @@ function SessionsPage({ sessions }) {
               { value: "unknown", label: "Unknown" }
             ]}
           />
+
+          <Button
+            type="button"
+            icon={Filter}
+            variant={showAdvanced ? "primary" : "secondary"}
+            onClick={() => setShowAdvanced(!showAdvanced)}
+          >
+            Advanced Filters
+          </Button>
         </div>
+
+        {showAdvanced && (
+          <div className="stack" style={{ padding: "16px", borderBottom: "1px solid var(--color-border-subtle)", background: "var(--color-bg-secondary)", borderRadius: "var(--radius-md)", margin: "12px 0", gap: "16px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "14px" }}>
+              <label className="field">
+                <span>Target IP</span>
+                <input value={targetIp} onChange={(e) => setTargetIp(e.target.value)} placeholder="e.g. 49.36.128.45" />
+              </label>
+              <label className="field">
+                <span>Application</span>
+                <input value={app} onChange={(e) => setApp(e.target.value)} placeholder="e.g. Whatsapp, Telegram" />
+              </label>
+              <label className="field">
+                <span>Domain</span>
+                <input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="e.g. facebook.com, google" />
+              </label>
+              <label className="field">
+                <span>Cell Tower ID</span>
+                <input value={cellId} onChange={(e) => setCellId(e.target.value)} placeholder="e.g. 404-10-123" />
+              </label>
+              <label className="field">
+                <span>IMEI</span>
+                <input value={imei} onChange={(e) => setImei(e.target.value)} placeholder="e.g. 3567890123" />
+              </label>
+            </div>
+
+            <div style={{ borderTop: "1px solid var(--color-border)", paddingTop: "12px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px", flexWrap: "wrap", gap: "10px" }}>
+                <span style={{ fontSize: "13px", fontWeight: "600" }}>Advanced Date-Time Filtration</span>
+                <div style={{ display: "flex", gap: "12px" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", cursor: "pointer" }}>
+                    <input type="radio" checked={timeMode === "serial"} onChange={() => setTimeMode("serial")} />
+                    Serial Mode (Single window)
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", cursor: "pointer" }}>
+                    <input type="radio" checked={timeMode === "parallel"} onChange={() => setTimeMode("parallel")} />
+                    Parallel Mode (Multiple windows)
+                  </label>
+                </div>
+              </div>
+
+              {timeMode === "serial" ? (
+                <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
+                  <label className="field" style={{ flex: 1, minWidth: "180px" }}>
+                    <span>From Timestamp</span>
+                    <input type="datetime-local" value={serialRange.from} onChange={(e) => setSerialRange({ ...serialRange, from: e.target.value })} />
+                  </label>
+                  <label className="field" style={{ flex: 1, minWidth: "180px" }}>
+                    <span>To Timestamp</span>
+                    <input type="datetime-local" value={serialRange.to} onChange={(e) => setSerialRange({ ...serialRange, to: e.target.value })} />
+                  </label>
+                  <Button type="button" variant="secondary" onClick={() => setSerialRange({ from: "", to: "" })} style={{ marginTop: "18px" }}>Clear</Button>
+                </div>
+              ) : (
+                <div className="stack" style={{ gap: "10px" }}>
+                  {parallelRanges.map((range, index) => (
+                    <div key={range.id} style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
+                      <label className="field" style={{ flex: 1, minWidth: "180px" }}>
+                        <span>Window #{index + 1} - From</span>
+                        <input type="datetime-local" value={range.from} onChange={(e) => {
+                          const updated = [...parallelRanges];
+                          updated[index].from = e.target.value;
+                          setParallelRanges(updated);
+                        }} />
+                      </label>
+                      <label className="field" style={{ flex: 1, minWidth: "180px" }}>
+                        <span>Window #{index + 1} - To</span>
+                        <input type="datetime-local" value={range.to} onChange={(e) => {
+                          const updated = [...parallelRanges];
+                          updated[index].to = e.target.value;
+                          setParallelRanges(updated);
+                        }} />
+                      </label>
+                      {parallelRanges.length > 1 && (
+                        <button
+                          type="button"
+                          className="icon-button danger"
+                          onClick={() => setParallelRanges(parallelRanges.filter(r => r.id !== range.id))}
+                          style={{ height: "36px", width: "36px", padding: 0, marginTop: "18px" }}
+                          title="Remove Window"
+                        >
+                          <X size={16} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px" }}>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setParallelRanges([...parallelRanges, { from: "", to: "", id: Date.now() }])}
+                    >
+                      + Add Time Window
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setParallelRanges([{ from: "", to: "", id: 1 }])}
+                    >
+                      Reset Windows
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "4px" }}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setTargetIp("");
+                  setApp("");
+                  setDomain("");
+                  setCellId("");
+                  setImei("");
+                  setSerialRange({ from: "", to: "" });
+                  setParallelRanges([{ from: "", to: "", id: 1 }]);
+                  setQuery("");
+                  setClassification("all");
+                }}
+              >
+                Reset All Filters
+              </Button>
+            </div>
+          </div>
+        )}
+
         <SessionsTable sessions={filtered} />
       </section>
     </motion.section>
@@ -1046,6 +1372,11 @@ function ReportsPage({ sessions }) {
           )) : <EmptyState label="No cell tower/location columns found" />}
         </div>
       </section>
+      
+      <section className="panel span-12" style={{ gridColumn: 'span 12' }}>
+        <PanelHeader icon={LocateFixed} title="GIS Location Analysis (Click to drop Geofence)" />
+        <GeoMap locationData={locationRows} />
+      </section>
     </motion.section>
   );
 }
@@ -1224,10 +1555,10 @@ function SessionsTable({ sessions, compact = false }) {
         <tbody>
           {sessions.length ? sessions.map((session) => (
             <tr key={session.id}>
-              <td className="mono">{session.a_party_msisdn}</td>
+              <td><NavLink to={`/poi/${session.a_party_msisdn}`} className="text-link mono">{session.a_party_msisdn}</NavLink></td>
               {!compact ? <td className="mono">{formatEndpoint(session.source_ip, session.source_port)}</td> : null}
               {!compact ? <td className="mono">{formatEndpoint(session.translated_ip, session.translated_port)}</td> : null}
-              <td><span className="mono">{formatEndpoint(session.destination_ip, session.destination_port)}</span></td>
+              <td><NavLink to={`/ip/${session.destination_ip}`} className="text-link mono">{formatEndpoint(session.destination_ip, session.destination_port)}</NavLink></td>
               <td>{session.operator}</td>
               <td><Badge tone={toneForClass(session.classification)}>{session.classification}</Badge></td>
               {!compact ? <td className="mono">{date(session.started_at)}</td> : null}
@@ -1864,6 +2195,26 @@ function ImportSpecsPanel({ importSpecs, createImportSpec }) {
   const [description, setDescription] = useState("");
   const [delimiter, setDelimiter] = useState("");
   const [mappingText, setMappingText] = useState(defaultMapping);
+  const fileInputRef = useRef(null);
+  const [analyzing, setAnalyzing] = useState(false);
+
+  const handleAutoSuggest = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAnalyzing(true);
+    try {
+      const result = await api.autoSuggestMapping(file);
+      const newMappingText = Object.entries(result.suggested_mapping || result)
+        .map(([k, v]) => `${k}=${v}`)
+        .join("\n");
+      setMappingText(newMappingText);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setAnalyzing(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   const submit = async (event) => {
     event.preventDefault();
@@ -1895,7 +2246,16 @@ function ImportSpecsPanel({ importSpecs, createImportSpec }) {
           <label className="field"><span>Delimiter</span><input value={delimiter} onChange={(event) => setDelimiter(event.target.value)} placeholder="Auto, comma, tab, pipe" /></label>
         </div>
         <label className="field"><span>Description</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="When investigators should use this spec" /></label>
-        <label className="field"><span>Column mapping</span><textarea value={mappingText} onChange={(event) => setMappingText(event.target.value)} rows={12} /></label>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "12px", marginBottom: "4px" }}>
+           <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--color-text-secondary)" }}>COLUMN MAPPING</span>
+           <label style={{ display: "flex", alignItems: "center", cursor: "pointer" }}>
+             <Button type="button" variant="secondary" onClick={() => fileInputRef.current?.click()} disabled={analyzing}>
+               {analyzing ? "Analyzing..." : "Auto-Detect"}
+             </Button>
+             <input type="file" ref={fileInputRef} style={{ display: "none" }} onChange={handleAutoSuggest} />
+           </label>
+        </div>
+        <label className="field"><textarea value={mappingText} onChange={(event) => setMappingText(event.target.value)} rows={12} style={{ fontFamily: "var(--font-mono)" }} /></label>
         <Button icon={FileText} disabled={!name.trim()}>Save import spec</Button>
       </form>
       <div className="spec-list">
@@ -1970,21 +2330,9 @@ function StatCard({ icon: Icon, label, value, tone = "neutral" }) {
   );
 }
 
-function PanelHeader({ icon: Icon, title, action = null }) {
-  return (
-    <div className="panel-header">
-      <div>
-        <Icon size={18} />
-        <h2>{title}</h2>
-      </div>
-      {action}
-    </div>
-  );
-}
 
-function Badge({ children, tone = "neutral" }) {
-  return <span className={`badge ${tone}`}>{children}</span>;
-}
+
+
 
 function Button({ children, icon: Icon, variant = "primary", ...props }) {
   return (
@@ -2056,9 +2404,7 @@ function Progress({ value }) {
   );
 }
 
-function EmptyState({ label }) {
-  return <div className="empty-state">{label}</div>;
-}
+
 
 function TableEmptyRow({ colSpan, label }) {
   return (
@@ -2106,9 +2452,7 @@ function splitList(value) {
     .map((item) => item.trim())
     .filter(Boolean);
 }
-function number(value) {
-  return new Intl.NumberFormat("en-IN").format(value ?? 0);
-}
+
 
 function date(value) {
   return new Intl.DateTimeFormat("en-IN", {

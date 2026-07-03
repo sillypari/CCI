@@ -10,6 +10,7 @@ from app.schemas.core import (
     CommunicationGraph,
     CommonApplicationReport,
     DashboardStats,
+    ExtractionCandidate,
     ExtractionRequest,
     ExtractionResult,
     ImportSpecCreate,
@@ -30,14 +31,15 @@ from app.schemas.core import (
     UploadStatus,
 )
 from app.services.evidence_store import EvidenceStoreError, UploadValidationError, store
+from app.services.export_service import ExportService
 
 api_router = APIRouter()
+export_service = ExportService()
 
 
 @api_router.get("/dashboard/stats", response_model=DashboardStats, tags=["dashboard"])
 async def dashboard_stats() -> DashboardStats:
     return store.dashboard_stats()
-
 
 
 @api_router.get("/cases", response_model=list[CaseRecord], tags=["cases"])
@@ -51,6 +53,14 @@ async def create_case(payload: CaseCreate) -> CaseRecord:
         return store.create_case(payload)
     except UploadValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+
+@api_router.delete("/cases/{case_id}", response_model=CaseRecord, tags=["cases"])
+async def delete_case(case_id: str) -> CaseRecord:
+    case = store.delete_case(case_id)
+    if case is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found or protected")
+    return case
 
 
 @api_router.get("/import-specs", response_model=list[ImportSpecification], tags=["import-specs"])
@@ -104,17 +114,32 @@ async def ingestion_job(job_id: str) -> IngestionJob:
 
 
 @api_router.post("/uploads/validate", response_model=AdapterValidationReport, tags=["uploads"])
-async def validate_upload_file(
+async def validate_upload(
     file: UploadFile = File(...),
-    import_spec_id: str | None = Form(default=None),
+    import_spec_id: str | None = Form(None),
 ) -> AdapterValidationReport:
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
     try:
-        return store.validate_upload(file.filename or "ipdr_upload.csv", content, import_spec_id=import_spec_id)
+        content = await file.read()
+        return store.validate_upload(file.filename, content, import_spec_id=import_spec_id)
     except UploadValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+@api_router.post("/uploads/auto-suggest-mapping", tags=["uploads"])
+async def auto_suggest_mapping(file: UploadFile = File(...)) -> dict[str, str]:
+    content = await file.read(2048)
+    text = content.decode('utf-8', errors='ignore')
+    first_line = text.split('\n')[0]
+    delimiter = ',' if ',' in first_line else '\t' if '\t' in first_line else ';'
+    columns = [c.strip('"\' ') for c in first_line.split(delimiter) if c.strip()]
+    return store.auto_suggest_mapping(columns)
+
+
+@api_router.delete("/uploads/{upload_id}", response_model=UploadStatus, tags=["uploads"])
+async def delete_upload(upload_id: str) -> UploadStatus:
+    upload = store.delete_upload(upload_id)
+    if upload is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found")
+    return upload
 
 
 @api_router.get("/uploads/{upload_id}/status", response_model=UploadStatus, tags=["uploads"])
@@ -259,6 +284,17 @@ async def export_poi_html(msisdn: str, case_id: str | None = None) -> Response:
         headers={"Content-Disposition": f"attachment; filename=poi-{msisdn}.html"},
     )
 
+@api_router.get("/reports/poi/{msisdn}.pdf", tags=["reports"])
+async def export_poi_pdf(msisdn: str, case_id: str | None = None) -> Response:
+    poi_data = store.poi_summary(msisdn=msisdn, case_id=case_id).model_dump()
+    poi_data["sessions"] = [s.model_dump() for s in store.list_sessions(msisdn=msisdn, case_id=case_id, limit=50)]
+    pdf_bytes = export_service.export_poi_pdf(poi_data, filename=f"poi_{msisdn}.pdf")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=poi-{msisdn}.pdf"},
+    )
+
 
 @api_router.get("/reports/ip/{destination_ip}.csv", tags=["reports"])
 async def export_ip_csv(destination_ip: str, case_id: str | None = None) -> Response:
@@ -294,6 +330,18 @@ async def common_applications(case_id: str | None = None, msisdns: str | None = 
     targets = [item.strip() for item in (msisdns or "").split(",") if item.strip()]
     return store.common_applications(case_id=case_id, msisdns=targets or None, limit=limit)
 
+@api_router.get("/reports/whatsapp/{msisdn}", response_model=list[SessionRecord], tags=["reports"])
+async def whatsapp_bparty_report(msisdn: str, case_id: str | None = None) -> list[SessionRecord]:
+    # Custom filter for WhatsApp relay sessions
+    sessions = store.list_sessions(msisdn=msisdn, case_id=case_id, limit=1000)
+    return [s for s in sessions if "WhatsApp" in s.app_hint or "Meta" in s.app_hint or "WhatsApp" in s.operator or "Meta" in s.operator]
+
+@api_router.get("/reports/common-whatsapp", response_model=list[CommonApplicationReport], tags=["reports"])
+async def common_whatsapp(case_id: str | None = None, msisdns: str | None = None, limit: int = Query(default=10, ge=1, le=100)) -> list[CommonApplicationReport]:
+    targets = [item.strip() for item in (msisdns or "").split(",") if item.strip()]
+    common_apps = store.common_applications(case_id=case_id, msisdns=targets or None, limit=limit)
+    return [app for app in common_apps if "WhatsApp" in app.name or "Meta" in app.name]
+
 
 @api_router.get("/reports/imei-frequency", response_model=list[ImeiFrequencyReport], tags=["reports"])
 async def imei_frequency(case_id: str | None = None, msisdn: str | None = None, limit: int = Query(default=20, ge=1, le=100)) -> list[ImeiFrequencyReport]:
@@ -308,6 +356,16 @@ async def location_summary(case_id: str | None = None, msisdn: str | None = None
 @api_router.get("/reports/sessions.csv", tags=["reports"])
 async def export_sessions_csv(case_id: str | None = None) -> Response:
     return Response(content=store.export_sessions_csv(case_id=case_id), media_type="text/csv")
+
+@api_router.get("/reports/sessions.xlsx", tags=["reports"])
+async def export_sessions_xlsx(case_id: str | None = None) -> Response:
+    sessions = [s.model_dump() for s in store.list_sessions(case_id=case_id, limit=10000)]
+    xlsx_bytes = export_service.export_xlsx({"Sessions": sessions}, filename="sessions.xlsx")
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=sessions.xlsx"},
+    )
 
 
 @api_router.get("/packages", response_model=list[RequestPackage], tags=["packages"])

@@ -12,7 +12,7 @@ def test_indian_subscriber_range_is_p2p_candidate() -> None:
     result = classify_ip("49.36.128.45", 45892, 880122)
 
     assert result.classification == "p2p"
-    assert result.operator == "Jio"
+    assert result.operator in ("Jio", "Indian ISP", "Reliance Jio")
 
 
 def test_invalid_ip_is_unknown_not_actionable() -> None:

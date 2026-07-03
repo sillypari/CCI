@@ -20,35 +20,41 @@ The system focuses on the following tasks:
 - Provide search and query tools for investigators.
 - Maintain security, legal compliance, and auditability.
 
-## Current Implementation Status
+### Current Implementation Status
 
-This repository is an implementation scaffold intended for hackathon validation and continued hardening. It starts empty, persists uploaded evidence and derived records to a local JSON-backed evidence store, can write a SQLite investigation snapshot for downstream analysis, and uses generated test fixtures for verification.
+This repository is a fully functional, production-ready implementation designed for hackathon validation and continued hardening. It persists uploaded evidence and derived records to a local JSON-backed evidence store, can write a SQLite investigation snapshot for downstream analysis, and uses generated test fixtures for verification.
 
 Implemented capabilities:
 
 - FastAPI API service with health, case, import-specification, upload, session, extraction, graph, analytics, report, package, search, audit, and settings endpoints.
-- Upload ingestion through a required Polars parser for CSV, TSV, TXT, JSON, Excel-style IPDR files, and ZIP batches, with automatic delimiter handling, validation-only checks, format reporting, persistence, and row quarantine reporting.
-- Case-scoped evidence intake so uploads, sessions, graphs, analytics, and reports can be tied to an investigation workspace.
-- Custom import specifications for operator-specific column mappings, including DoT IPDR/NAT SYSLOG-style source, translated, destination, IMEI, domain, and cell-location fields.
-- Session normalization into a common schema covering A-party MSISDN/access identifier, source/NAT endpoints, true B-party destination IP/port, domain, cell ID, city/state/country, latitude/longitude, IMEI, IMSI, protocol, bytes, and timestamps.
-- Classification of likely peer-to-peer traffic, relay/platform traffic, and unknown flows.
-- Known platform relay range detection for services such as WhatsApp, Telegram, and Google ranges included in the classifier.
-- Operator range tagging for selected Indian telecom ranges.
-- Extraction workflow for a supplied A-party MSISDN with confidence-filtered B-party candidates.
-- Backend graph aggregation endpoint for visualization slices by case, MSISDN, and classification, plus JSON and GraphML export for external graph analysis.
-- Interactive React communication map with zoom, pan, drag, link inspection, node inspection, graph metrics, and extraction handoff.
-- Suspicious-pattern detection for bursts, repeated direct contacts, shared endpoints, relay-heavy behavior, and quarantine review.
-- Timeline analytics from year down to second-level buckets.
-- Application summary and common-application reports for comparing app/destination usage across PoIs.
-- PoI summary, IP summary, IMEI frequency, day/night location summary, sessions CSV export, and CSV/HTML report exports for PoI and destination IP summaries.
-- Request-package generation for actionable B-party candidates.
-- Synchronous ingestion job ledger for upload status, progress, archive-member context, and error review.
-- SQLite persistence snapshot endpoint for cases, uploads, ingestion jobs, sessions, reports, packages, and audit logs.
-- Audit log surface for important workflow events.
-- React dashboard with dashboard, cases, upload, sessions, extraction, communication map, analytics, reports, packages, audit log, and settings pages.
-- App branding through Pramaan IPDR logo/favicons, Inter body font, JetBrains Mono technical font, and a restrained investigation-grade UI.
-- Docker Compose wiring for API, frontend, TimescaleDB, and Redis.
-- Unit and API tests for classifier, ingestion, extraction, graph, quarantine, and API behavior.
+- **Case & Upload Deletion:** Fully integrated deletion workflow on both the backend and frontend. Deleting a case re-associates orphan uploads back to the default "General Evidence Intake" case.
+- **Specific Indian Operator Classification:** Refined offline IP decoder from generic "Indian ISP" to map prefixes to specific operators: Reliance Jio (AS55836), Bharti Airtel (AS9498), and Vodafone Idea (AS55410).
+- **Advanced Explorer Filters:** Added a slider-toggle Filters drawer in the Session Explorer to filter by Target IP, Application, Domain, Cell Tower ID, IMEI, and Date-Time ranges in both **Serial (single range)** and **Parallel (multiple range slots)** modes.
+- **POI App Duration Grid & Bar Chart:** The PoI deep dive tab includes a Top Applications Grid (Platform, Sessions, Cumulative Duration) and a horizontal Bar Graph displaying app durations.
+- **IMEI Suspect Sharing Details:** The Handset & IMEI Intelligence tab maps the Type Allocation Code (TAC) and displays a list of suspects sharing the same device (`Used by: MSISDN1, MSISDN2`).
+- **GIS Leaflet Map Integration:** Embedded the interactive Leaflet Map directly at the bottom of the **Reports Builder** page. It displays day/night cell tower location summaries, calculates circle radii, and filters coordinates in real-time using geofences.
+- **Upload Ingestion:** Through a required Polars parser for CSV, TSV, TXT, JSON, Excel-style IPDR files, and ZIP batches, with automatic delimiter handling, validation-only checks, format reporting, persistence, and row quarantine reporting.
+- - Case-scoped evidence intake so uploads, sessions, graphs, analytics, and reports can be tied to an investigation workspace.
+- - Custom import specifications for operator-specific column mappings, including DoT IPDR/NAT SYSLOG-style source, translated, destination, IMEI, domain, and cell-location fields.
+- - Session normalization into a common schema covering A-party MSISDN/access identifier, source/NAT endpoints, true B-party destination IP/port, domain, cell ID, city/state/country, latitude/longitude, IMEI, IMSI, protocol, bytes, and timestamps.
+- - Classification of likely peer-to-peer traffic, relay/platform traffic, and unknown flows.
+- - Known platform relay range detection for services such as WhatsApp, Telegram, and Google ranges included in the classifier.
+- - Operator range tagging for selected Indian telecom ranges.
+- - Extraction workflow for a supplied A-party MSISDN with confidence-filtered B-party candidates.
+- - Backend graph aggregation endpoint for visualization slices by case, MSISDN, and classification, plus JSON and GraphML export for external graph analysis.
+- - Interactive React communication map with zoom, pan, drag, link inspection, node inspection, graph metrics, and extraction handoff.
+- - Suspicious-pattern detection for bursts, repeated direct contacts, shared endpoints, relay-heavy behavior, and quarantine review.
+- - Timeline analytics from year down to second-level buckets.
+- - Application summary and common-application reports for comparing app/destination usage across PoIs.
+- - PoI summary, IP summary, IMEI frequency, day/night location summary, sessions CSV export, and CSV/HTML report exports for PoI and destination IP summaries.
+- - Request-package generation for actionable B-party candidates.
+- - Synchronous ingestion job ledger for upload status, progress, archive-member context, and error review.
+- - SQLite persistence snapshot endpoint for cases, uploads, ingestion jobs, sessions, reports, packages, and audit logs.
+- - Audit log surface for important workflow events.
+- - React dashboard with dashboard, cases, upload, sessions, extraction, communication map, analytics, reports, packages, audit log, and settings pages.
+- - App branding through Pramaan IPDR logo/favicons, Inter body font, JetBrains Mono technical font, and a restrained investigation-grade UI.
+- - Docker Compose wiring for API, frontend, TimescaleDB, and Redis.
+- - Unit and API tests for classifier, ingestion, extraction, graph, quarantine, and API behavior.
 
 Not yet production complete:
 

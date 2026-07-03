@@ -3002,24 +3002,19 @@ tbody tr:hover {
   overflow: hidden;
 }
 
-.signal-row::before {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: var(--color-border);
+.signal-row.high {
+  background: linear-gradient(180deg, #ffffff 0%, #fef2f2 100%);
+  border: none;
 }
 
-.signal-row.high::before {
-  background: var(--color-danger);
+.signal-row.medium {
+  background: linear-gradient(180deg, #ffffff 0%, #fffbeb 100%);
+  border: none;
 }
 
-.signal-row.medium::before {
-  background: var(--color-warning);
-}
-
-.signal-row.low::before {
-  background: var(--color-brand);
+.signal-row.low {
+  background: linear-gradient(180deg, #ffffff 0%, #f0fdfa 100%);
+  border: none;
 }
 
 .signal-row strong,
@@ -3326,4 +3321,26 @@ tbody tr:hover {
   .persistence-card__meta {
     justify-content: flex-start;
   }
+}
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.icon-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  color: var(--color-text-secondary);
+}
+
+.icon-button:hover {
+  color: var(--color-text);
+}
+
+.icon-button.danger:hover {
+  color: var(--color-danger);
 }

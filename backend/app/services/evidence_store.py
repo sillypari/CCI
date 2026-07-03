@@ -47,8 +47,13 @@ from app.schemas.core import (
     TimelinePoint,
     UploadStatus,
 )
-from app.services.classifier import PLATFORM_RELAYS, classify_ip
+from app.services.classifier import classify_ip
 from app.services.ingestion import IngestionError, parse_ipdr_upload
+from app.services.tac_decoder import TACDecoder
+from app.services.cell_decoder import CellDecoder
+
+tac_decoder = TACDecoder()
+cell_decoder = CellDecoder()
 
 IST = timezone(timedelta(hours=5, minutes=30))
 STORE_VERSION = 1
@@ -326,23 +331,21 @@ class EvidenceStore:
             )
         ]
     def _default_platform_ranges(self) -> list[PlatformRange]:
+        # Legacy static ranges list (now mostly handled by IPDecoder offline DBs)
         ranges: list[PlatformRange] = []
-        counter = 1
         verified_at = now_ist() - timedelta(days=7)
-        for platform, cidrs in PLATFORM_RELAYS.items():
-            for cidr in cidrs:
-                ranges.append(
-                    PlatformRange(
-                        id=f"RNG-{counter:03d}",
-                        platform=platform,
-                        cidr=cidr,
-                        asn="relay",
-                        description=f"Known {platform} infrastructure range",
-                        active=True,
-                        last_verified=verified_at,
-                    )
-                )
-                counter += 1
+        # Add a dummy range to keep the UI from being completely empty
+        ranges.append(
+            PlatformRange(
+                id="RNG-001",
+                platform="Meta/WhatsApp",
+                cidr="157.240.0.0/16",
+                asn="AS32934",
+                description="Known Meta infrastructure range",
+                active=True,
+                last_verified=verified_at,
+            )
+        )
         return ranges
 
     def dashboard_stats(self) -> DashboardStats:
@@ -396,9 +399,35 @@ class EvidenceStore:
             self._save()
         return case
 
+    def delete_case(self, case_id: str) -> CaseRecord | None:
+        if case_id == "CASE-GENERAL":
+            return None
+        with self._lock:
+            case = next((item for item in self.cases if item.id == case_id), None)
+            if case is None:
+                return None
+            self.cases = [item for item in self.cases if item.id != case_id]
+            for upload in self.uploads:
+                if upload.case_id == case_id:
+                    upload.case_id = "CASE-GENERAL"
+            self._audit_unlocked("case_deleted", "case", case_id, {"name": case.name})
+            self._save()
+        return case
+
     def list_import_specs(self) -> list[ImportSpecification]:
         with self._lock:
-            return sorted(self.import_specs, key=lambda item: item.updated_at, reverse=True)
+            return sorted(self.import_specs, key=lambda item: item.created_at, reverse=True)
+
+    def auto_suggest_mapping(self, columns: list[str]) -> dict[str, str]:
+        mapping = {}
+        for col in columns:
+            col_lower = col.lower().strip()
+            for canonical, aliases in COLUMN_ALIASES.items():
+                if col_lower in aliases or any(a in col_lower for a in aliases if len(a) > 4):
+                    if canonical not in mapping:
+                        mapping[canonical] = col
+                        break
+        return mapping
 
     def get_import_spec(self, spec_id: str | None) -> ImportSpecification | None:
         if not spec_id:
@@ -470,6 +499,57 @@ class EvidenceStore:
     def get_upload_quarantine(self, upload_id: str) -> list[QuarantineRecord] | None:
         upload = self.get_upload(upload_id)
         return None if upload is None else upload.quarantine_errors
+
+    def delete_upload(self, upload_id: str) -> UploadStatus | None:
+        with self._lock:
+            upload = next((item for item in self.uploads if item.id == upload_id), None)
+            if upload is None:
+                return None
+
+            removed_sessions = [session for session in self.sessions if session.upload_id == upload_id]
+            removed_session_ids = {session.id for session in removed_sessions}
+            removed_msisdns = {session.a_party_msisdn for session in removed_sessions}
+            removed_package_count = sum(1 for package in self.packages if package.session_id in removed_session_ids)
+            removed_extraction_count = sum(
+                1
+                for extraction in self.extractions
+                if extraction.requested_msisdn in removed_msisdns or any(candidate.session_id in removed_session_ids for candidate in extraction.candidates)
+            )
+
+            deleted_files: list[str] = []
+            file_errors: list[str] = []
+            for stored_path in self.evidence_dir.glob(f"{upload_id}_*"):
+                try:
+                    stored_path.unlink(missing_ok=True)
+                    deleted_files.append(stored_path.name)
+                except OSError as exc:
+                    file_errors.append(f"{stored_path.name}: {exc}")
+
+            self.uploads = [item for item in self.uploads if item.id != upload_id]
+            self.sessions = [session for session in self.sessions if session.upload_id != upload_id]
+            self.jobs = [job for job in self.jobs if job.upload_id != upload_id]
+            self.packages = [package for package in self.packages if package.session_id not in removed_session_ids]
+            self.extractions = [
+                extraction
+                for extraction in self.extractions
+                if extraction.requested_msisdn not in removed_msisdns and all(candidate.session_id not in removed_session_ids for candidate in extraction.candidates)
+            ]
+            self._audit_unlocked(
+                "upload_deleted",
+                "upload",
+                upload_id,
+                {
+                    "filename": upload.filename,
+                    "case_id": upload.case_id,
+                    "removed_sessions": len(removed_sessions),
+                    "removed_packages": removed_package_count,
+                    "removed_extractions": removed_extraction_count,
+                    "deleted_files": deleted_files,
+                    "file_errors": file_errors,
+                },
+            )
+            self._save()
+            return upload
 
     def validate_upload(self, filename: str, content: bytes, import_spec_id: str | None = None) -> AdapterValidationReport:
         if not content:
@@ -652,6 +732,7 @@ class EvidenceStore:
                 self.jobs[index] = replacement
                 return
         self.jobs.append(replacement)
+
     def _upload_message(self, valid: int, quarantined: int) -> str:
         if valid and quarantined:
             return f"Ingested {valid} rows; quarantined {quarantined} rows requiring review"
@@ -673,7 +754,7 @@ class EvidenceStore:
         ended_at = self._timestamp_from_row(normalized, "ended", row_number, required=False)
         if duration == 0 and ended_at is not None and ended_at >= started_at:
             duration = int((ended_at - started_at).total_seconds())
-        result = classify_ip(destination_ip, destination_port, bytes_down)
+        result = classify_ip(destination_ip, destination_port, bytes_down, protocol=protocol, duration=duration)
         record_type = "ipdr_nat" if translated_ip or translated_port else "ipdr"
         return SessionRecord(
             id=f"SES-{uuid.uuid4().hex[:8]}",
@@ -1384,7 +1465,7 @@ class EvidenceStore:
                 msisdns=sorted(item["msisdns"]),
                 first_seen=min(item["times"]) if item["times"] else None,
                 last_seen=max(item["times"]) if item["times"] else None,
-                handset_hint=f"TAC {imei[:8]}" if len(imei) >= 8 else None,
+                handset_hint=tac_decoder.decode_imei(imei).model if tac_decoder.decode_imei(imei).model else f"TAC {imei[:8]}" if len(imei) >= 8 else None,
             )
             for imei, item in grouped.items()
         ]
@@ -1397,7 +1478,18 @@ class EvidenceStore:
             key = session.cell_id or " | ".join(part for part in (session.city, session.state, session.country) if part)
             if not key:
                 continue
+            
+            lat = session.latitude
+            lng = session.longitude
             label = session.tower_name or key
+            
+            if session.cell_id:
+                cell_info = cell_decoder.decode(session.cell_id)
+                lat = lat or cell_info.latitude
+                lng = lng or cell_info.longitude
+                if cell_info.address and not session.tower_name:
+                    label = cell_info.address
+                    
             item = grouped.setdefault(
                 key,
                 {
@@ -1408,8 +1500,8 @@ class EvidenceStore:
                     "night_sessions": 0,
                     "msisdns": set(),
                     "times": [],
-                    "latitude": session.latitude,
-                    "longitude": session.longitude,
+                    "latitude": lat,
+                    "longitude": lng,
                 },
             )
             item["sessions"] += 1
@@ -1419,8 +1511,8 @@ class EvidenceStore:
                 item["night_sessions"] += 1
             item["msisdns"].add(session.a_party_msisdn)
             item["times"].append(session.started_at)
-            item["latitude"] = item["latitude"] if item["latitude"] is not None else session.latitude
-            item["longitude"] = item["longitude"] if item["longitude"] is not None else session.longitude
+            item["latitude"] = item["latitude"] if item["latitude"] is not None else lat
+            item["longitude"] = item["longitude"] if item["longitude"] is not None else lng
         rows = [
             LocationSummaryReport(
                 key=item["key"],
@@ -1444,6 +1536,7 @@ class EvidenceStore:
         total_bytes = sum(session.bytes_up + session.bytes_down for session in sessions)
         by_destination: dict[str, dict[str, Any]] = defaultdict(lambda: {"sessions": 0, "bytes_total": 0, "classification": "unknown", "operator": "Unknown"})
         by_application: dict[str, int] = defaultdict(int)
+        by_application_duration: dict[str, int] = defaultdict(int)
         for session in sessions:
             endpoint = f"{session.destination_ip}:{session.destination_port}"
             by_destination[endpoint]["sessions"] += 1
@@ -1451,6 +1544,7 @@ class EvidenceStore:
             by_destination[endpoint]["classification"] = self._merge_classification(by_destination[endpoint]["classification"], session.classification)
             by_destination[endpoint]["operator"] = session.operator
             by_application[session.app_hint] += 1
+            by_application_duration[session.app_hint] += session.duration_seconds
         times = [session.started_at for session in sessions]
         return PoiSummaryReport(
             msisdn=normalized_msisdn,
@@ -1462,7 +1556,7 @@ class EvidenceStore:
             last_seen=max(times) if times else None,
             total_bytes=total_bytes,
             imeis=sorted({session.imei for session in sessions if session.imei}),
-            applications=[{"name": key, "sessions": value} for key, value in sorted(by_application.items(), key=lambda item: (-item[1], item[0]))[:10]],
+            applications=[{"name": key, "sessions": value, "duration": by_application_duration[key]} for key, value in sorted(by_application.items(), key=lambda item: (-item[1], item[0]))[:10]],
             top_destinations=[{"endpoint": key, **value} for key, value in sorted(by_destination.items(), key=lambda item: (-item[1]["sessions"], -item[1]["bytes_total"]))[:10]],
         )
 

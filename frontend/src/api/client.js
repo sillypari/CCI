@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api";
+const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000/api";
 
 export const API_BASE_URL = API_URL;
 
@@ -36,6 +36,8 @@ async function request(path, options = {}) {
 export const api = {
   dashboard: () => request("/dashboard/stats"),
   uploads: () => request("/uploads"),
+  deleteUpload: (uploadId) => request(`/uploads/${encodeURIComponent(uploadId)}`, { method: "DELETE" }),
+  deleteCase: (caseId) => request(`/cases/${encodeURIComponent(caseId)}`, { method: "DELETE" }),
   uploadJobs: () => request("/uploads/jobs"),
   sessions: (query = "") => request(`/sessions${query}`),
   graph: (query = "") => request(`/graph${query}`),
@@ -60,6 +62,10 @@ export const api = {
   poiHtmlUrl: (msisdn) => `${API_URL}/reports/poi/${encodeURIComponent(msisdn)}.html`,
   ipCsvUrl: (ip) => `${API_URL}/reports/ip/${encodeURIComponent(ip)}.csv`,
   ipHtmlUrl: (ip) => `${API_URL}/reports/ip/${encodeURIComponent(ip)}.html`,
+  poiPdfUrl: (msisdn) => `${API_URL}/reports/poi/${encodeURIComponent(msisdn)}.pdf`,
+  sessionsXlsxUrl: (query = "") => `${API_URL}/reports/sessions.xlsx${query}`,
+  whatsappBparty: (msisdn) => request(`/reports/whatsapp/${encodeURIComponent(msisdn)}`),
+  commonWhatsapp: (query = "") => request(`/reports/common-whatsapp${query}`),
   persistenceStatus: () => request("/persistence/status"),
   createPersistenceSnapshot: () => request("/persistence/snapshot", { method: "POST" }),
   createCase: (payload) =>
@@ -92,5 +98,10 @@ export const api = {
     body.append("file", file);
     if (options.importSpecId) body.append("import_spec_id", options.importSpecId);
     return request("/uploads/validate", { method: "POST", body });
+  },
+  autoSuggestMapping: (file) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request("/uploads/auto-suggest-mapping", { method: "POST", body });
   }
 };
