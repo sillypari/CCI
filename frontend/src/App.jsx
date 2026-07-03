@@ -1427,7 +1427,17 @@ function AnalyticsPage({ timeline, applications, patterns }) {
   const [points, setPoints] = useState(timeline);
   const [busy, setBusy] = useState(false);
 
+  // Sync points with parent timeline when it changes (only for default hour bucket)
   useEffect(() => {
+    if (bucket === "hour") {
+      setPoints(timeline);
+    }
+  }, [timeline, bucket]);
+
+  // Fetch timeline data only when bucket changes
+  useEffect(() => {
+    if (bucket === "hour") return;
+
     let cancelled = false;
     const loadTimeline = async () => {
       setBusy(true);
@@ -1444,7 +1454,7 @@ function AnalyticsPage({ timeline, applications, patterns }) {
     return () => {
       cancelled = true;
     };
-  }, [bucket, timeline]);
+  }, [bucket]);
 
   const maxSessions = Math.max(1, ...points.map((item) => item.sessions));
   return (
