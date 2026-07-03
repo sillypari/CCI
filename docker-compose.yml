@@ -25,7 +25,7 @@ services:
       - uploads:/app/uploads
     environment:
       IPDR_UPLOAD_DIR: /app/uploads
-      IPDR_DEMO_MODE: "true"
+      IPDR_MAX_UPLOAD_BYTES: "52428800"
     depends_on:
       - db
       - redis

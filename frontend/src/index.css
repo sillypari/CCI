@@ -251,8 +251,8 @@ svg {
   background: var(--color-success);
 }
 
-.system-state.demo span {
-  background: var(--color-warning);
+.system-state.offline span {
+  background: var(--color-danger);
 }
 
 .content {
@@ -2947,4 +2947,38 @@ tbody tr:hover {
 .app-shell.is-collapsed .nav-item[data-tooltip]::before {
   content: none !important;
   display: none !important;
+}
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid rgba(214, 76, 74, 0.28);
+  border-radius: var(--radius-lg);
+  background: var(--color-danger-subtle);
+  color: var(--color-text-primary);
+  font-size: 14px;
+}
+
+.error-banner svg {
+  color: var(--color-danger);
+  flex: 0 0 auto;
+}
+
+.table-empty {
+  height: 92px;
+  color: var(--color-text-secondary);
+  text-align: center;
+  background: var(--color-bg-secondary);
+}
+
+.toast.error {
+  border-left-color: var(--color-danger);
+}
+
+.button:disabled,
+.select-control__button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }

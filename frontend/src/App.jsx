@@ -5,7 +5,6 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
   AlertTriangle,
-  Bell,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -36,15 +35,6 @@ import {
   ZoomOut
 } from "lucide-react";
 import { api } from "./api/client.js";
-import {
-  demoAuditLogs,
-  demoExtractions,
-  demoPackages,
-  demoPlatformRanges,
-  demoSessions,
-  demoStats,
-  demoUploads
-} from "./data/demo.js";
 
 const pageMotion = {
   initial: { opacity: 0, y: 8 },
@@ -64,19 +54,31 @@ const navItems = [
   { icon: Settings, label: "Settings", path: "/settings" }
 ];
 
-const defaultState = {
-  stats: demoStats,
-  uploads: demoUploads,
-  sessions: demoSessions,
-  extractions: demoExtractions,
-  packages: demoPackages,
-  auditLogs: demoAuditLogs,
-  platformRanges: demoPlatformRanges
+const emptyStats = {
+  uploads: 0,
+  sessions: 0,
+  actionable: 0,
+  relay: 0,
+  unknown: 0,
+  quarantined_rows: 0,
+  avg_confidence: 0,
+  latest_upload: null
+};
+
+const initialState = {
+  stats: emptyStats,
+  uploads: [],
+  sessions: [],
+  extractions: [],
+  packages: [],
+  auditLogs: [],
+  platformRanges: []
 };
 
 function App() {
-  const [data, setData] = useState(defaultState);
+  const [data, setData] = useState(initialState);
   const [apiLive, setApiLive] = useState(false);
+  const [apiError, setApiError] = useState("");
   const [toasts, setToasts] = useState([]);
 
   const pushToast = useCallback((kind, title, body) => {
@@ -100,9 +102,10 @@ function App() {
       ]);
       setData({ stats, uploads, sessions, extractions, packages: packagesList, auditLogs, platformRanges });
       setApiLive(true);
-    } catch {
-      setData(defaultState);
+      setApiError("");
+    } catch (error) {
       setApiLive(false);
+      setApiError(error.message);
     }
   }, []);
 
@@ -114,23 +117,14 @@ function App() {
     async (file) => {
       try {
         const upload = await api.upload(file);
-        pushToast("success", "Upload processed", upload.message ?? file.name);
+        pushToast(upload.status === "failed" ? "warning" : "success", upload.status === "failed" ? "Upload quarantined" : "Upload processed", upload.message ?? file.name);
         await refresh();
+        return upload.status !== "failed";
       } catch (error) {
-        const fallback = {
-          id: `UPL-${Date.now()}`,
-          filename: file.name,
-          status: "completed",
-          rows_total: 0,
-          rows_valid: 0,
-          rows_quarantined: 0,
-          progress: 100,
-          created_at: new Date().toISOString(),
-          completed_at: new Date().toISOString(),
-          message: "Stored locally for UI demo"
-        };
-        setData((current) => ({ ...current, uploads: [fallback, ...current.uploads] }));
-        pushToast("warning", "Backend unavailable", error.message);
+        setApiLive(false);
+        setApiError(error.message);
+        pushToast("error", "Upload failed", error.message);
+        return false;
       }
     },
     [pushToast, refresh]
@@ -140,34 +134,29 @@ function App() {
     async (payload) => {
       try {
         const extraction = await api.extract(payload);
-        const packagesList = await api.packages();
-        const auditLogs = await api.auditLogs();
+        const [packagesList, auditLogs] = await Promise.all([api.packages(), api.auditLogs()]);
         setData((current) => ({
           ...current,
           extractions: [extraction, ...current.extractions.filter((item) => item.id !== extraction.id)],
           packages: packagesList,
           auditLogs
         }));
+        setApiLive(true);
+        setApiError("");
         pushToast("success", "Extraction complete", `${extraction.actionable_count} actionable candidates found`);
         return extraction;
       } catch (error) {
-        const { extraction, packagesList, auditLog } = localExtraction(payload, data.sessions);
-        setData((current) => ({
-          ...current,
-          extractions: [extraction, ...current.extractions],
-          packages: [...packagesList, ...current.packages],
-          auditLogs: [auditLog, ...current.auditLogs]
-        }));
-        pushToast("warning", "Using local demo extraction", error.message);
-        return extraction;
+        setApiError(error.message);
+        pushToast("error", "Extraction failed", error.message);
+        return null;
       }
     },
-    [data.sessions, pushToast]
+    [pushToast]
   );
 
   return (
     <>
-      <Shell apiLive={apiLive}>
+      <Shell apiLive={apiLive} apiError={apiError}>
         <AnimatePresence mode="wait">
           <Routes>
             <Route path="/" element={<DashboardPage data={data} />} />
@@ -186,7 +175,7 @@ function App() {
   );
 }
 
-function Shell({ apiLive, children }) {
+function Shell({ apiLive, apiError, children }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -255,12 +244,15 @@ function Shell({ apiLive, children }) {
             <Search size={16} />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search MSISDN, IP, file" />
           </form>
-          <div className={`system-state ${apiLive ? "healthy" : "demo"}`}>
+          <div className={`system-state ${apiLive ? "healthy" : "offline"}`}>
             <span />
-            {apiLive ? "API live" : "Demo mode"}
+            {apiLive ? "API live" : "API offline"}
           </div>
         </header>
-        <main className="content">{children}</main>
+        <main className="content">
+          {apiError ? <div className="error-banner" role="alert"><AlertTriangle size={16} /> <span>{apiError}</span></div> : null}
+          {children}
+        </main>
       </div>
     </div>
   );
@@ -342,9 +334,11 @@ function UploadsPage({ uploads, uploadFile }) {
   const submitUpload = async (event) => {
     event.preventDefault();
     if (activeFile) {
-      await uploadFile(activeFile);
-      setActiveFile(null);
-      event.currentTarget.reset();
+      const uploaded = await uploadFile(activeFile);
+      if (uploaded) {
+        setActiveFile(null);
+        event.currentTarget.reset();
+      }
     }
   };
 
@@ -400,14 +394,14 @@ function UploadsPage({ uploads, uploadFile }) {
               </tr>
             </thead>
             <tbody>
-              {uploads.map((upload) => (
+              {uploads.length ? uploads.map((upload) => (
                 <tr key={upload.id}>
                   <td>{upload.filename}</td>
-                  <td><Badge tone={upload.status === "completed" ? "success" : "warning"}>{upload.status}</Badge></td>
+                  <td><Badge tone={upload.status === "completed" ? "success" : upload.status === "failed" ? "danger" : "warning"}>{upload.status}</Badge></td>
                   <td>{number(upload.rows_valid)} / {number(upload.rows_total)}</td>
                   <td><Progress value={upload.progress} /></td>
                 </tr>
-              ))}
+              )) : <TableEmptyRow colSpan={4} label="No evidence files uploaded" />}
             </tbody>
           </table>
         </div>
@@ -464,16 +458,20 @@ function SessionsPage({ sessions }) {
 }
 
 function ExtractionsPage({ extractions, runExtraction }) {
-  const [msisdn, setMsisdn] = useState("919876543210");
+  const [msisdn, setMsisdn] = useState("");
   const [depth, setDepth] = useState(1);
   const [busy, setBusy] = useState(false);
   const latest = extractions[0];
 
   const submit = async (event) => {
     event.preventDefault();
+    if (!msisdn.trim()) return;
     setBusy(true);
-    await runExtraction({ msisdn, depth: Number(depth), min_confidence: 0.65 });
-    setBusy(false);
+    try {
+      await runExtraction({ msisdn, depth: Number(depth), min_confidence: 0.65 });
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -483,7 +481,7 @@ function ExtractionsPage({ extractions, runExtraction }) {
         <form className="stack" onSubmit={submit}>
           <label className="field">
             <span>MSISDN</span>
-            <input value={msisdn} onChange={(event) => setMsisdn(event.target.value)} />
+            <input value={msisdn} onChange={(event) => setMsisdn(event.target.value)} placeholder="Enter A-party MSISDN" />
           </label>
           <div className="field">
             <span>Depth</span>
@@ -497,7 +495,7 @@ function ExtractionsPage({ extractions, runExtraction }) {
               ]}
             />
           </div>
-          <Button icon={Play} disabled={busy}>{busy ? "Running" : "Run extraction"}</Button>
+          <Button icon={Play} disabled={busy || !msisdn.trim()}>{busy ? "Running" : "Run extraction"}</Button>
         </form>
       </section>
       <section className="panel span-8">
@@ -509,7 +507,7 @@ function ExtractionsPage({ extractions, runExtraction }) {
 }
 
 function MapPage({ sessions, runExtraction }) {
-  const [msisdn, setMsisdn] = useState("919876543210");
+  const [msisdn, setMsisdn] = useState("");
   const [classification, setClassification] = useState("all");
   const [selected, setSelected] = useState(null);
 
@@ -523,7 +521,7 @@ function MapPage({ sessions, runExtraction }) {
             <div className="map-actions">
               <label className="map-query">
                 <Search size={16} />
-                <input aria-label="A-party MSISDN" value={msisdn} onChange={(event) => setMsisdn(event.target.value)} />
+                <input aria-label="A-party MSISDN" value={msisdn} onChange={(event) => setMsisdn(event.target.value)} placeholder="Filter MSISDN" />
               </label>
               <SelectControl
                 ariaLabel="Graph classification filter"
@@ -536,7 +534,7 @@ function MapPage({ sessions, runExtraction }) {
                   { value: "unknown", label: "Unknown" }
                 ]}
               />
-              <Button type="button" icon={Target} onClick={() => runExtraction({ msisdn, depth: 1, min_confidence: 0.65 })}>Extract</Button>
+              <Button type="button" icon={Target} disabled={!msisdn.trim()} onClick={() => runExtraction({ msisdn, depth: 1, min_confidence: 0.65 })}>Extract</Button>
             </div>
           }
         />
@@ -546,7 +544,7 @@ function MapPage({ sessions, runExtraction }) {
           classification={classification}
           selected={selected}
           onSelect={setSelected}
-          onExtract={() => runExtraction({ msisdn, depth: 1, min_confidence: 0.65 })}
+          onExtract={() => (msisdn.trim() ? runExtraction({ msisdn, depth: 1, min_confidence: 0.65 }) : null)}
         />
       </section>
     </motion.section>
@@ -556,10 +554,31 @@ function PackagesPage({ packagesList }) {
   const [selectedId, setSelectedId] = useState(packagesList[0]?.id);
   const selected = packagesList.find((item) => item.id === selectedId) ?? packagesList[0];
 
+  useEffect(() => {
+    if (!packagesList.length) {
+      setSelectedId(undefined);
+      return;
+    }
+    if (!selectedId || !packagesList.some((item) => item.id === selectedId)) {
+      setSelectedId(packagesList[0].id);
+    }
+  }, [packagesList, selectedId]);
+
   const copyPayload = async () => {
     if (selected) {
       await navigator.clipboard?.writeText(JSON.stringify(selected.payload, null, 2));
     }
+  };
+
+  const exportPayload = () => {
+    if (!selected) return;
+    const blob = new Blob([JSON.stringify(selected.payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${selected.id}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -567,13 +586,13 @@ function PackagesPage({ packagesList }) {
       <section className="panel span-5">
         <PanelHeader icon={FileText} title="Packages" action={<Badge tone="brand">{packagesList.length}</Badge>} />
         <div className="package-list">
-          {packagesList.map((item) => (
+          {packagesList.length ? packagesList.map((item) => (
             <button className={`package-row ${item.id === selected?.id ? "active" : ""}`} key={item.id} onClick={() => setSelectedId(item.id)} type="button">
               <span>{item.id}</span>
               <strong>{item.target_operator}</strong>
               <small>{item.payload.destination_ip}:{item.payload.destination_port}</small>
             </button>
-          ))}
+          )) : <EmptyState label="No request packages generated" />}
         </div>
       </section>
       <section className="panel span-7">
@@ -582,17 +601,16 @@ function PackagesPage({ packagesList }) {
           title="Request Package"
           action={
             <div className="toolbar compact">
-              <Button icon={Copy} variant="secondary" onClick={copyPayload}>Copy</Button>
-              <Button icon={Download} variant="secondary">Export JSON</Button>
+              <Button icon={Copy} variant="secondary" disabled={!selected} onClick={copyPayload}>Copy</Button>
+              <Button icon={Download} variant="secondary" disabled={!selected} onClick={exportPayload}>Export JSON</Button>
             </div>
           }
         />
-        {selected ? <RequestPackageCard item={selected} /> : <EmptyState label="No packages generated" />}
+        {selected ? <RequestPackageCard item={selected} /> : <EmptyState label="No package selected" />}
       </section>
     </motion.section>
   );
 }
-
 function AuditPage({ auditLogs }) {
   return (
     <motion.section {...pageMotion} className="page-grid">
@@ -610,7 +628,7 @@ function AuditPage({ auditLogs }) {
               </tr>
             </thead>
             <tbody>
-              {auditLogs.map((log) => (
+              {auditLogs.length ? auditLogs.map((log) => (
                 <tr key={log.id}>
                   <td className="mono">{date(log.timestamp)}</td>
                   <td><Badge tone="brand">{log.action}</Badge></td>
@@ -618,7 +636,7 @@ function AuditPage({ auditLogs }) {
                   <td>{log.user}</td>
                   <td className="mono">{JSON.stringify(log.details)}</td>
                 </tr>
-              ))}
+              )) : <TableEmptyRow colSpan={5} label="No audit events recorded" />}
             </tbody>
           </table>
         </div>
@@ -665,7 +683,7 @@ function SessionsTable({ sessions, compact = false }) {
           </tr>
         </thead>
         <tbody>
-          {sessions.map((session) => (
+          {sessions.length ? sessions.map((session) => (
             <tr key={session.id}>
               <td className="mono">{session.a_party_msisdn}</td>
               <td><span className="mono">{session.destination_ip}:{session.destination_port}</span></td>
@@ -674,7 +692,7 @@ function SessionsTable({ sessions, compact = false }) {
               {!compact ? <td className="mono">{date(session.started_at)}</td> : null}
               <td>{Math.round(session.confidence * 100)}%</td>
             </tr>
-          ))}
+          )) : <TableEmptyRow colSpan={compact ? 5 : 6} label="No normalized sessions found" />}
         </tbody>
       </table>
     </div>
@@ -701,7 +719,7 @@ function ExtractionResultView({ extraction }) {
             </tr>
           </thead>
           <tbody>
-            {extraction.candidates.map((candidate) => (
+            {extraction.candidates.length ? extraction.candidates.map((candidate) => (
               <tr key={`${candidate.session_id}-${candidate.destination_ip}`}>
                 <td className="mono">{candidate.destination_ip}:{candidate.destination_port}</td>
                 <td>{candidate.target_operator}</td>
@@ -709,7 +727,7 @@ function ExtractionResultView({ extraction }) {
                 <td>{candidate.evidence}</td>
                 <td>{Math.round(candidate.confidence * 100)}%</td>
               </tr>
-            ))}
+            )) : <TableEmptyRow colSpan={5} label="No candidates met the confidence threshold" />}
           </tbody>
         </table>
       </div>
@@ -1291,7 +1309,7 @@ function RangesTable({ ranges }) {
           </tr>
         </thead>
         <tbody>
-          {ranges.map((range) => (
+          {ranges.length ? ranges.map((range) => (
             <tr key={range.id}>
               <td>{range.platform}</td>
               <td className="mono">{range.cidr}</td>
@@ -1299,7 +1317,7 @@ function RangesTable({ ranges }) {
               <td><Badge tone={range.active ? "success" : "neutral"}>{range.active ? "active" : "inactive"}</Badge></td>
               <td className="mono">{date(range.last_verified)}</td>
             </tr>
-          ))}
+          )) : <TableEmptyRow colSpan={5} label="No platform ranges configured" />}
         </tbody>
       </table>
     </div>
@@ -1323,7 +1341,7 @@ function AdaptersPanel() {
 function SystemPanel({ stats, apiLive }) {
   return (
     <div className="system-grid">
-      <StatCard icon={Server} label="API" value={apiLive ? "Live" : "Demo"} tone={apiLive ? "success" : "warning"} />
+      <StatCard icon={Server} label="API" value={apiLive ? "Live" : "Offline"} tone={apiLive ? "success" : "danger"} />
       <StatCard icon={Database} label="Rows" value={number(stats.sessions)} tone="brand" />
       <StatCard icon={AlertTriangle} label="Quarantine" value={number(stats.quarantined_rows)} tone="danger" />
     </div>
@@ -1430,6 +1448,14 @@ function EmptyState({ label }) {
   return <div className="empty-state">{label}</div>;
 }
 
+function TableEmptyRow({ colSpan, label }) {
+  return (
+    <tr>
+      <td className="table-empty" colSpan={colSpan}>{label}</td>
+    </tr>
+  );
+}
+
 function ToastViewport({ toasts, dismiss }) {
   return (
     <div className="toast-stack">
@@ -1444,7 +1470,7 @@ function ToastViewport({ toasts, dismiss }) {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 80 }}
           >
-            {toast.kind === "success" ? <CheckCircle2 size={18} /> : <Bell size={18} />}
+            {toast.kind === "success" ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
             <span>
               <strong>{toast.title}</strong>
               <small>{toast.body}</small>
@@ -1454,74 +1480,6 @@ function ToastViewport({ toasts, dismiss }) {
       </AnimatePresence>
     </div>
   );
-}
-
-function localExtraction(payload, sessions) {
-  const matched = sessions.filter((session) => session.a_party_msisdn.includes(payload.msisdn));
-  const candidates = matched
-    .filter((session) => session.confidence >= payload.min_confidence)
-    .map((session) => ({
-      session_id: session.id,
-      destination_ip: session.destination_ip,
-      destination_port: session.destination_port,
-      target_operator: session.operator,
-      asn: session.asn,
-      classification: session.classification,
-      confidence: session.confidence,
-      evidence: `${session.source_file} row ${session.row_number}; ${session.app_hint}`
-    }));
-  const extractionId = `EXT-${Date.now()}`;
-  const extraction = {
-    id: extractionId,
-    requested_msisdn: payload.msisdn,
-    depth: payload.depth,
-    total_sessions: matched.length,
-    actionable_count: candidates.filter((candidate) => candidate.classification === "p2p").length,
-    relay_count: candidates.filter((candidate) => candidate.classification === "relay").length,
-    candidates,
-    created_at: new Date().toISOString()
-  };
-  const packagesList = candidates
-    .filter((candidate) => candidate.classification === "p2p")
-    .map((candidate, index) => {
-      const session = matched.find((item) => item.id === candidate.session_id);
-      return {
-        id: `PKG-${Date.now()}-${index}`,
-        extraction_id: extractionId,
-        session_id: candidate.session_id,
-        request_type: "Section 91/92 CrPC subscriber identity request",
-        target_operator: candidate.target_operator,
-        created_at: new Date().toISOString(),
-        payload: {
-          requesting_unit: "Gwalior Police Cyber Cell",
-          a_party_msisdn: payload.msisdn,
-          destination_ip: candidate.destination_ip,
-          destination_port: candidate.destination_port,
-          protocol: session?.protocol ?? "UDP",
-          timestamp_ist: session?.started_at,
-          duration_seconds: session?.duration_seconds ?? 0,
-          classification: candidate.classification,
-          confidence: candidate.confidence,
-          evidence_chain: {
-            source_file: session?.source_file,
-            row_number: session?.row_number,
-            extraction_id: extractionId,
-            session_id: candidate.session_id
-          }
-        }
-      };
-    });
-  const auditLog = {
-    id: `AUD-${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    action: "extract",
-    entity_type: "extraction",
-    entity_id: extractionId,
-    user: "demo.operator",
-    ip_address: "127.0.0.1",
-    details: { msisdn: payload.msisdn, candidates: candidates.length }
-  };
-  return { extraction, packagesList, auditLog };
 }
 
 function toneForClass(classification) {

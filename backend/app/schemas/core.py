@@ -7,6 +7,12 @@ from pydantic import BaseModel, Field
 Classification = Literal["p2p", "relay", "unknown"]
 
 
+class QuarantineRecord(BaseModel):
+    row_number: int
+    field: str | None = None
+    reason: str
+
+
 class UploadStatus(BaseModel):
     id: str
     filename: str
@@ -18,6 +24,7 @@ class UploadStatus(BaseModel):
     created_at: datetime
     completed_at: datetime | None = None
     message: str | None = None
+    quarantine_errors: list[QuarantineRecord] = Field(default_factory=list)
 
 
 class SessionRecord(BaseModel):
@@ -116,4 +123,3 @@ class SearchResult(BaseModel):
     title: str
     subtitle: str
     metadata: dict[str, Any] = Field(default_factory=dict)
-

@@ -2,7 +2,7 @@
 
 Pramaan IPDR is a smart investigation workflow for extracting and identifying B-party public IP addresses, mobile endpoints, and communication relationships from IPDR logs. The project is designed for law-enforcement investigation teams that need to normalize operator-provided IPDR files, map A-party to B-party interactions, reduce relay/noise traffic, and prepare actionable request packages with an auditable evidence trail.
 
-This repository contains a working Phase 1 scaffold with a FastAPI backend, a Vite React dashboard, demo-mode IPDR parsing, IP classification, extraction workflows, communication mapping, and request-package generation.
+This repository contains a working Phase 1 implementation with a FastAPI backend, a Vite React dashboard, persistent local evidence storage, IPDR parsing, IP classification, extraction workflows, communication mapping, and request-package generation.
 
 ## Problem Statement
 
@@ -22,12 +22,12 @@ The system focuses on the following tasks:
 
 ## Current Implementation Status
 
-This repository is an implementation scaffold intended for hackathon demonstration and Phase 1 validation. It currently runs in demo mode using an in-memory store and synthetic or uploaded IPDR-style rows.
+This repository is an implementation scaffold intended for hackathon validation and continued hardening. It starts empty, persists uploaded evidence and derived records to a local JSON-backed evidence store, and uses generated test fixtures for verification.
 
 Implemented capabilities:
 
 - FastAPI API service with health, upload, session, extraction, package, search, audit, and settings endpoints.
-- Upload ingestion for delimited IPDR-style files with automatic delimiter handling in the demo store.
+- Upload ingestion for delimited and JSON IPDR-style files with automatic delimiter handling, validation, persistence, and row quarantine reporting.
 - Session normalization into a common schema.
 - Classification of likely peer-to-peer traffic, relay/platform traffic, and unknown flows.
 - Known platform relay range detection for services such as WhatsApp, Telegram, and Google ranges included in the classifier.
@@ -55,10 +55,10 @@ Not yet production complete:
 |   |-- app/
 |   |   |-- api/              # FastAPI route definitions
 |   |   |-- schemas/          # Pydantic request and response models
-|   |   |-- services/         # Demo store and IP classification logic
+|   |   |-- services/         # Evidence store and IP classification logic
 |   |   |-- config.py         # Environment-based settings
 |   |   `-- main.py           # FastAPI application factory
-|   |-- scripts/              # Utility scripts, including synthetic IPDR generation
+|   |-- scripts/              # Utility scripts, including test IPDR fixture generation
 |   |-- tests/                # Backend unit tests
 |   |-- Dockerfile
 |   |-- pyproject.toml
@@ -67,7 +67,6 @@ Not yet production complete:
 |   |-- public/               # App icon and branding assets
 |   |-- src/
 |   |   |-- api/              # Frontend API client
-|   |   |-- data/             # Demo fallback data
 |   |   |-- App.jsx           # Main React application
 |   |   |-- index.css         # Design system and layout styles
 |   |   `-- main.jsx
@@ -119,9 +118,9 @@ Infrastructure wiring:
 9. Audit logs record investigation workflow events for traceability.
 10. Communication map visualizes connections between A-party MSISDNs and destination endpoints.
 
-## Supported Demo Upload Format
+## Supported Upload Format
 
-The demo parser expects delimited records with a header row. CSV, TSV, and pipe-delimited text are suitable for the current implementation.
+The parser expects delimited records with a header row or JSON records. CSV, TSV, semicolon-delimited, pipe-delimited text, and JSON arrays are suitable for the current implementation.
 
 Recommended columns:
 
@@ -147,10 +146,10 @@ You can generate a sample file with:
 
 ```powershell
 cd backend
-python scripts/generate_synthetic_ipdr.py
+python scripts/generate_test_ipdr.py
 ```
 
-The generated file is written as `backend/sample_ipdr.csv`. It is intentionally ignored by Git because it is runtime/demo data.
+The generated files are written to `backend/tests/fixtures/` and are committed as deterministic test evidence files.
 
 ## Local Setup
 
@@ -175,7 +174,7 @@ Default backend settings:
 | --- | --- | --- |
 | `IPDR_API_PREFIX` | `/api` | API route prefix |
 | `IPDR_UPLOAD_DIR` | `uploads` | Upload storage directory |
-| `IPDR_DEMO_MODE` | `true` | Demo-mode behavior flag |
+| `IPDR_MAX_UPLOAD_BYTES` | `52428800` | Maximum accepted upload size in bytes |
 | `IPDR_CORS_ORIGINS` | `http://localhost:5173`, `http://127.0.0.1:5173` | Allowed frontend origins |
 
 Default frontend setting:
@@ -244,7 +243,7 @@ Use the dashboard to view upload count, normalized session count, actionable can
 3. Click `Process file`.
 4. Review upload status, valid rows, quarantined rows, and progress.
 
-For best results in the current demo parser, use the column names listed in `Supported Demo Upload Format`.
+For best results, use the column names or accepted aliases listed in `Supported Upload Format`. Invalid rows are quarantined with row-level reasons.
 
 ### Sessions
 
@@ -322,13 +321,13 @@ http://localhost:8000/api
 | `GET` | `/search` | Search sessions, uploads, and packages |
 | `GET` | `/platform-ranges` | List configured platform ranges |
 | `POST` | `/platform-ranges` | Add a platform range |
-| `WS` | `/ws/progress` | Demo upload-progress websocket stream |
+| `GET` | `/uploads/{upload_id}/quarantine` | List row-level quarantine reasons for an upload |
 
 Example upload request:
 
 ```powershell
 curl.exe -X POST "http://localhost:8000/api/uploads" `
-  -F "file=@backend/sample_ipdr.csv"
+  -F "file=@backend/tests/fixtures/valid_ipdr.csv"
 ```
 
 Example extraction request:
@@ -412,7 +411,7 @@ Operational recommendations before production use:
 
 Recommended next milestones:
 
-1. Replace the in-memory demo store with SQLAlchemy async models and Alembic migrations.
+1. Replace the local JSON-backed evidence store with SQLAlchemy async models and Alembic migrations.
 2. Persist uploads, normalized sessions, extractions, request packages, and audit logs in TimescaleDB/PostgreSQL.
 3. Add Redis-backed Celery or RQ workers for large-file parsing.
 4. Add streaming ingestion with Polars for large operator files.
@@ -448,7 +447,7 @@ If the API is hosted on a different URL, set `VITE_API_URL` before running the f
 
 ### Upload returns invalid or quarantined rows
 
-Confirm the file has a header row and includes the expected columns. Start with the synthetic generator if you need a known-good sample.
+Confirm the file has a header row and includes the expected columns. Start with `backend/tests/fixtures/valid_ipdr.csv` or regenerate fixtures with `python backend/scripts/generate_test_ipdr.py` if you need a known-good sample.
 
 ### Docker Compose port conflict
 
