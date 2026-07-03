@@ -27,6 +27,7 @@ import {
   LayoutDashboard,
   LocateFixed,
   Menu,
+  Loader2,
   Network,
   PanelLeftClose,
   PanelLeftOpen,
@@ -606,6 +607,18 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
   }, [caseId, caseOptions]);
 
   const setFile = (file) => {
+    if (file && file.size > 50 * 1024 * 1024) {
+      const confirmed = window.confirm(
+        `This file is very large (${(file.size / (1024 * 1024)).toFixed(2)} MB). Processing large files may take a moment. Do you wish to proceed?`
+      );
+      if (!confirmed) {
+        const inputEl = document.getElementById(fileInputId);
+        if (inputEl) inputEl.value = "";
+        setActiveFile(null);
+        setValidationReport(null);
+        return;
+      }
+    }
     setActiveFile(file);
     setValidationReport(null);
   };
@@ -653,17 +666,28 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
             onChange={(event) => setFile(event.target.files?.[0] ?? null)}
           />
           <label
-            className={`upload-drop__surface ${activeFile ? "has-file" : ""} ${isDragging ? "is-dragging" : ""}`}
+            className={`upload-drop__surface ${activeFile ? "has-file" : ""} ${isDragging ? "is-dragging" : ""} ${validating ? "is-validating" : ""}`}
             htmlFor={fileInputId}
-            onDragEnter={() => setIsDragging(true)}
+            onDragEnter={() => !validating && setIsDragging(true)}
             onDragLeave={() => setIsDragging(false)}
             onDragOver={(event) => event.preventDefault()}
             onDrop={handleDrop}
+            style={validating ? { pointerEvents: "none", opacity: 0.7 } : {}}
           >
-            <span className="upload-drop__icon"><FileJson size={34} /></span>
-            <strong>{activeFile ? activeFile.name : "Select IPDR evidence file"}</strong>
-            <span>{activeFile ? `${number(activeFile.size)} bytes ready for validation` : "CSV, TSV, TXT, JSON, XLSX, ZIP batch"}</span>
-            <span className="upload-drop__action">{activeFile ? "Change file" : "Browse file"}</span>
+            {validating ? (
+              <>
+                <span className="upload-drop__icon animate-spin"><Loader2 size={34} style={{ color: "var(--color-brand)" }} /></span>
+                <strong>Validating file format...</strong>
+                <span>Parsing schema, checking delimiters and checking for column matches...</span>
+              </>
+            ) : (
+              <>
+                <span className="upload-drop__icon"><FileJson size={34} /></span>
+                <strong>{activeFile ? activeFile.name : "Select IPDR evidence file"}</strong>
+                <span>{activeFile ? `${number(activeFile.size)} bytes ready for validation` : "CSV, TSV, TXT, JSON, XLSX, ZIP batch"}</span>
+                <span className="upload-drop__action">{activeFile ? "Change file" : "Browse file"}</span>
+              </>
+            )}
           </label>
           <div className="form-grid compact">
             <div className="field">
@@ -677,10 +701,17 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
           </div>
           {validationReport ? <ValidationReportCard report={validationReport} /> : null}
           <div className="button-row">
-            <Button type="button" icon={CheckCircle2} variant="secondary" disabled={!activeFile || validating} onClick={runValidation}>
-              {validating ? "Validating" : "Validate format"}
+            <Button 
+              type="button" 
+              icon={validating ? Loader2 : CheckCircle2} 
+              variant="secondary" 
+              disabled={!activeFile || validating} 
+              onClick={runValidation}
+              iconClassName={validating ? "animate-spin" : ""}
+            >
+              {validating ? "Validating..." : "Validate format"}
             </Button>
-            <Button icon={Upload} disabled={!activeFile}>
+            <Button icon={Upload} disabled={!activeFile || validating}>
               Process file
             </Button>
           </div>
