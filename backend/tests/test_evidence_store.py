@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.schemas.core import ExtractionRequest
+from app.schemas.core import CaseCreate, ExtractionRequest, ImportSpecCreate
 from app.services.evidence_store import EvidenceStore, UploadValidationError
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -142,3 +142,63 @@ def test_suspicious_patterns_detect_short_window_burst(tmp_path: Path) -> None:
     assert burst.severity == "medium"
     assert burst.entities["msisdn"] == "919876543210"
     assert burst.entities["session_count"] == 3
+
+def test_case_scoped_import_spec_and_investigation_reports(tmp_path: Path) -> None:
+    evidence_store = EvidenceStore(tmp_path)
+    case = evidence_store.create_case(
+        CaseCreate(
+            name="Shared app investigation",
+            crime_type="Cybercrime",
+            io_name="IO Test",
+            targets=["919000000001", "919000000002"],
+            tags=["reports"],
+        )
+    )
+    spec = evidence_store.create_import_spec(
+        ImportSpecCreate(
+            name="Operator custom report",
+            mapping={
+                "msisdn": "Subscriber",
+                "source_ip": "Src",
+                "source_port": "SPort",
+                "destination_ip": "Dst",
+                "destination_port": "DPort",
+                "started_at": "Start",
+                "duration_seconds": "Duration",
+                "bytes_up": "Up",
+                "bytes_down": "Down",
+                "protocol": "Proto",
+                "imei": "Handset",
+                "cell_id": "Cell",
+                "domain": "Host",
+            },
+        )
+    )
+    content = "\n".join(
+        [
+            "Subscriber,Src,SPort,Dst,DPort,Start,Duration,Up,Down,Proto,Handset,Cell,Host,City,State,Country,Latitude,Longitude",
+            "919000000001,10.20.1.2,49152,49.36.128.45,45892,2026-07-03T10:00:00+05:30,120,1000,5000,UDP,356789012345678,CELL-101,media.example,Gwalior,Madhya Pradesh,India,26.2183,78.1828",
+            "919000000002,10.20.1.3,49153,49.36.128.46,45893,2026-07-03T23:30:00+05:30,180,1200,5200,UDP,356789012345678,CELL-101,media.example,Gwalior,Madhya Pradesh,India,26.2183,78.1828",
+        ]
+    ).encode("utf-8")
+
+    upload = evidence_store.ingest_upload("operator_custom.csv", content, case_id=case.id, import_spec_id=spec.id)
+    sessions = evidence_store.list_sessions(case_id=case.id, domain="media", cell_id="CELL-101", limit=10)
+    common_apps = evidence_store.common_applications(case_id=case.id)
+    imeis = evidence_store.imei_frequency(case_id=case.id)
+    locations = evidence_store.location_summary(case_id=case.id)
+    csv_export = evidence_store.export_sessions_csv(case_id=case.id)
+
+    assert upload.case_id == case.id
+    assert upload.import_spec_id == spec.id
+    assert upload.rows_valid == 2
+    assert len(sessions) == 2
+    assert {session.domain for session in sessions} == {"media.example"}
+    assert common_apps[0].sessions == 2
+    assert sorted(common_apps[0].poi_msisdns) == ["919000000001", "919000000002"]
+    assert imeis[0].imei == "356789012345678"
+    assert len(imeis[0].msisdns) == 2
+    assert locations[0].key == "CELL-101"
+    assert locations[0].day_sessions == 1
+    assert locations[0].night_sessions == 1
+    assert "domain" in csv_export and "cell_id" in csv_export

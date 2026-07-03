@@ -2,7 +2,7 @@
 
 Pramaan IPDR is a smart investigation workflow for extracting and identifying B-party public IP addresses, mobile endpoints, and communication relationships from IPDR logs. The project is designed for law-enforcement investigation teams that need to normalize operator-provided IPDR files, map A-party to B-party interactions, reduce relay/noise traffic, and prepare actionable request packages with an auditable evidence trail.
 
-This repository contains a working Phase 1 implementation with a FastAPI backend, a Vite React dashboard, persistent local evidence storage, IPDR parsing, IP classification, extraction workflows, communication mapping, and request-package generation.
+This repository contains a working Phase 1 implementation with a FastAPI backend, a Vite React dashboard, persistent local evidence storage, IPDR parsing, case management, configurable import specifications, IP classification, extraction workflows, communication mapping, timeline analytics, investigation reports, and request-package generation.
 
 ## Problem Statement
 
@@ -26,27 +26,36 @@ This repository is an implementation scaffold intended for hackathon validation 
 
 Implemented capabilities:
 
-- FastAPI API service with health, upload, session, extraction, package, search, audit, and settings endpoints.
+- FastAPI API service with health, case, import-specification, upload, session, extraction, graph, analytics, report, package, search, audit, and settings endpoints.
 - Upload ingestion through a required Polars parser for CSV, TSV, TXT, JSON, and Excel-style IPDR files, with automatic delimiter handling, format reporting, validation, persistence, and row quarantine reporting.
-- Session normalization into a common schema.
+- Case-scoped evidence intake so uploads, sessions, graphs, analytics, and reports can be tied to an investigation workspace.
+- Custom import specifications for operator-specific column mappings, including DoT IPDR/NAT SYSLOG-style source, translated, destination, IMEI, domain, and cell-location fields.
+- Session normalization into a common schema covering A-party MSISDN/access identifier, source/NAT endpoints, true B-party destination IP/port, domain, cell ID, city/state/country, latitude/longitude, IMEI, IMSI, protocol, bytes, and timestamps.
 - Classification of likely peer-to-peer traffic, relay/platform traffic, and unknown flows.
 - Known platform relay range detection for services such as WhatsApp, Telegram, and Google ranges included in the classifier.
 - Operator range tagging for selected Indian telecom ranges.
-- Extraction workflow for a supplied A-party MSISDN.
-- Backend graph aggregation endpoint for visualization slices by MSISDN and classification.
+- Extraction workflow for a supplied A-party MSISDN with confidence-filtered B-party candidates.
+- Backend graph aggregation endpoint for visualization slices by case, MSISDN, and classification.
+- Interactive React communication map with zoom, pan, drag, link inspection, node inspection, graph metrics, and extraction handoff.
 - Suspicious-pattern detection for bursts, repeated direct contacts, shared endpoints, relay-heavy behavior, and quarantine review.
+- Timeline analytics from year down to second-level buckets.
+- Application summary and common-application reports for comparing app/destination usage across PoIs.
+- PoI summary, IP summary, IMEI frequency, day/night location summary, and sessions CSV export reports.
 - Request-package generation for actionable B-party candidates.
 - Audit log surface for important workflow events.
-- React dashboard with dashboard, upload, sessions, extraction, communication map, packages, audit log, and settings pages.
+- React dashboard with dashboard, cases, upload, sessions, extraction, communication map, analytics, reports, packages, audit log, and settings pages.
+- App branding through Pramaan IPDR logo/favicons, Inter body font, JetBrains Mono technical font, and a restrained investigation-grade UI.
 - Docker Compose wiring for API, frontend, TimescaleDB, and Redis.
-- Unit tests for classifier and extraction behavior.
+- Unit and API tests for classifier, ingestion, extraction, graph, quarantine, and API behavior.
 
 Not yet production complete:
 
-- Persistent database models and migrations are not wired into the API flow yet.
+- Persistent database models and migrations are not wired into the API flow yet; the current evidence store is JSON-backed for local validation.
 - Background job processing is not active yet.
-- Authentication, RBAC, and case-level permissions are planned but not complete.
-- Operator-specific adapters are represented conceptually and need production data samples for hardening.
+- Authentication, RBAC, case-level permissions, and read-only reviewer roles are planned but not complete.
+- Operator-specific adapters need real operator sample files for hardening and certification.
+- Offline ASN, GeoIP, cell tower master data, TAC lookup, and MNP lookup should be populated with approved local datasets before field deployment.
+- OSINT, Truecaller, deep/dark web, and third-party lookup features are not claimed in this local build because they require legal approval, licensed data, and controlled integrations.
 - Legal request templates should be reviewed by the relevant department before operational use.
 
 ## Repository Structure
@@ -114,16 +123,19 @@ Infrastructure wiring:
 
 ## High-Level Workflow
 
-1. Investigator uploads an IPDR log file.
-2. The backend parses the file and normalizes records into session objects.
-3. Each session is classified as `p2p`, `relay`, or `unknown` using destination IP ranges, destination ports, byte counts, and operator/platform hints.
-4. The dashboard presents upload health, normalized sessions, candidate counts, and actionable rate.
-5. The investigator searches or filters sessions by MSISDN, IP, operator, or classification.
-6. The investigator runs extraction for an A-party MSISDN.
-7. The system returns B-party candidates with evidence references.
-8. Actionable candidates can be converted into request-package payloads.
-9. Audit logs record investigation workflow events for traceability.
-10. Communication map visualizes connections between A-party MSISDNs and destination endpoints.
+1. Investigator creates or selects a case workspace.
+2. Investigator optionally creates an import specification for the operator format.
+3. Investigator uploads an IPDR log file against the case.
+4. The backend parses the file and normalizes records into session objects.
+5. Each session is classified as `p2p`, `relay`, or `unknown` using destination IP ranges, destination ports, byte counts, and operator/platform hints.
+6. The dashboard presents case count, upload health, normalized sessions, candidate counts, quarantine count, and actionable rate.
+7. The investigator searches or filters sessions by MSISDN, IP, IMEI, application, domain, cell ID, case, date range, operator, or classification.
+8. The investigator opens the communication map to inspect A-party to B-party relationships with graph metrics, node details, link evidence, zoom, pan, and drag controls.
+9. The investigator runs extraction for an A-party MSISDN.
+10. The system returns B-party candidates with evidence references and confidence.
+11. Actionable candidates can be converted into request-package payloads.
+12. Analytics and Reports provide timeline drill-down, PoI summary, IP summary, common applications, IMEI frequency, day/night location summary, and CSV export.
+13. Audit logs record investigation workflow events for traceability.
 
 ## Supported Upload Format
 
@@ -151,6 +163,18 @@ Recommended DoT/NAT columns:
 | `imei`, `imsi`, `sim_type` | Mobile device/SIM identifiers when available | `356789012345678` |
 | `protocol` | Protocol name | `UDP` |
 | `bytes_up` / `bytes_down` | Traffic counters | `182044` / `880122` |
+
+Optional investigation-enrichment columns:
+
+| Column | Description | Example |
+| --- | --- | --- |
+| `domain` | Domain or hostname when supplied by the operator | `whatsapp.net` |
+| `cell_id` | Cell tower, CGI, ECGI, or other tower identifier | `404-10-12345-77` |
+| `tower_name` | Tower/site label when present | `Gwalior City Site 12` |
+| `city`, `state`, `country` | Decoded location fields from operator or cell master data | `Gwalior`, `Madhya Pradesh`, `India` |
+| `latitude`, `longitude` | Tower or event coordinates when available | `26.2183`, `78.1828` |
+
+These optional columns power domain filtering, cell ID filtering, day/night location summaries, and future GIS workflows. They are not required for B-party extraction because many real IPDR exports do not include decoded cell or domain information.
 
 Important: `translated_ip`, `public_ip`, `translated_port`, and `public_port` are parsed as NAT translation fields only. They are never used as the B-party destination unless the upload also contains a real `destination_ip` and `destination_port`.
 
@@ -327,23 +351,35 @@ http://localhost:8000/api
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| `GET` | `/dashboard/stats` | Dashboard metrics and latest upload summary |
+| `GET` | `/dashboard/stats` | Dashboard metrics, case count, crime-type counts, and latest upload summary |
+| `GET` | `/cases` | List investigation cases |
+| `POST` | `/cases` | Create an investigation case |
+| `GET` | `/import-specs` | List configurable operator import specifications |
+| `POST` | `/import-specs` | Create a custom import specification |
 | `GET` | `/uploads` | List upload records |
-| `POST` | `/uploads` | Upload an IPDR file as multipart form data |
+| `POST` | `/uploads` | Upload an IPDR file as multipart form data, optionally with `case_id` and `import_spec_id` |
 | `GET` | `/uploads/{upload_id}/status` | Read upload processing status |
-| `GET` | `/sessions` | List normalized sessions with optional filters |
+| `GET` | `/uploads/{upload_id}/quarantine` | List row-level quarantine reasons for an upload |
+| `GET` | `/sessions` | List normalized sessions with filters for case, MSISDN, class, IP, IMEI, app, domain, cell ID, and date range |
 | `GET` | `/sessions/{session_id}` | Read a single session |
 | `GET` | `/graph` | Return backend-aggregated graph nodes, links, sessions, and metrics |
 | `GET` | `/analytics/patterns` | List suspicious investigation signals detected from uploaded evidence |
+| `GET` | `/analytics/timeline` | Return year/month/day/hour/minute/second timeline buckets |
+| `GET` | `/analytics/applications` | Return application frequency and duration summary |
 | `POST` | `/extract` | Run B-party extraction for a supplied MSISDN |
 | `GET` | `/extractions` | List extraction results |
 | `GET` | `/extractions/{extraction_id}` | Read a single extraction result |
+| `GET` | `/reports/poi/{msisdn}` | Preview PoI MSISDN summary report |
+| `GET` | `/reports/ip/{destination_ip}` | Preview destination IP summary report |
+| `GET` | `/reports/common-applications` | List applications/destination IPs shared across PoIs |
+| `GET` | `/reports/imei-frequency` | List IMEI frequency and shared-handset evidence |
+| `GET` | `/reports/location-summary` | List cell/location day-night summaries when location columns exist |
+| `GET` | `/reports/sessions.csv` | Export normalized sessions as CSV |
 | `GET` | `/packages` | List generated request packages |
 | `GET` | `/audit-logs` | List audit log events |
 | `GET` | `/search` | Search sessions, uploads, and packages |
 | `GET` | `/platform-ranges` | List configured platform ranges |
 | `POST` | `/platform-ranges` | Add a platform range |
-| `GET` | `/uploads/{upload_id}/quarantine` | List row-level quarantine reasons for an upload |
 
 Example upload request:
 
@@ -434,15 +470,15 @@ Operational recommendations before production use:
 Recommended next milestones:
 
 1. Replace the local JSON-backed evidence store with SQLAlchemy async models and Alembic migrations.
-2. Persist uploads, normalized sessions, extractions, request packages, and audit logs in TimescaleDB/PostgreSQL.
+2. Persist uploads, normalized sessions, extractions, request packages, reports, import specifications, and audit logs in TimescaleDB/PostgreSQL.
 3. Add Redis-backed Celery or RQ workers for large-file parsing.
-4. Add streaming ingestion with Polars for large operator files.
-5. Create operator-specific adapters for Jio, Airtel, Vodafone Idea, BSNL, and other required formats.
-6. Add authentication, RBAC, case management, and evidence permissions.
-7. Add graph export, timeline correlation, and suspicious pattern detection.
-8. Add production-grade observability, structured logs, and metrics.
-9. Add legal request template generation with department-approved language.
-10. Harden deployment with secrets management, TLS, backups, and disaster recovery.
+4. Add streaming ingestion with Polars for very large operator files and benchmark import throughput against the target 2500+ records per second.
+5. Harden operator adapters for Jio, Airtel, Vodafone Idea, BSNL, and other required formats using real sanitized samples.
+6. Add authentication, RBAC, case-level permissions, read-only reviewers, and module-level access controls.
+7. Add approved offline datasets for ASN/IP decode, GeoIP, cell tower master data, TAC/handset lookup, and MNP lookup.
+8. Add graph export, i2 Analyst's Notebook-compatible export, and map/image export.
+9. Add department-approved legal request templates and PDF/Excel exports.
+10. Harden deployment with secrets management, TLS, backups, disaster recovery, observability, and tamper-evident audit storage.
 
 ## Troubleshooting
 

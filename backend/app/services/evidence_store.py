@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import ipaddress
 import json
 import re
@@ -12,8 +14,12 @@ from typing import Any
 
 from app.config import get_settings
 from app.schemas.core import (
+    ApplicationSummary,
     AuditLogEntry,
+    CaseCreate,
+    CaseRecord,
     CommunicationGraph,
+    CommonApplicationReport,
     DashboardStats,
     ExtractionCandidate,
     ExtractionRequest,
@@ -21,12 +27,19 @@ from app.schemas.core import (
     GraphEdge,
     GraphMetrics,
     GraphNode,
+    ImportSpecCreate,
+    ImportSpecification,
+    ImeiFrequencyReport,
+    IpSummaryReport,
+    LocationSummaryReport,
     PlatformRange,
+    PoiSummaryReport,
     QuarantineRecord,
     RequestPackage,
     SearchResult,
     SessionRecord,
     SuspiciousPattern,
+    TimelinePoint,
     UploadStatus,
 )
 from app.services.classifier import PLATFORM_RELAYS, classify_ip
@@ -139,6 +152,14 @@ COLUMN_ALIASES = {
         "destination_ip_port",
         "destination_ip_with_destination_port",
     ),
+    "domain": ("domain", "domain_name", "host", "hostname", "server_domain", "url_domain", "fqdn"),
+    "cell_id": ("cell_id", "cellid", "cell_tower_id", "tower_id", "cgi", "ecgi", "lac_cell_id", "enodeb_cell_id"),
+    "tower_name": ("tower_name", "site_name", "cell_site", "mast_name", "location_name"),
+    "city": ("city", "district", "location_city"),
+    "state": ("state", "telecom_circle", "circle", "location_state"),
+    "country": ("country", "country_name"),
+    "latitude": ("latitude", "lat", "tower_latitude", "cell_latitude"),
+    "longitude": ("longitude", "lon", "lng", "tower_longitude", "cell_longitude"),
     "ip_allocation": ("ip_allocation", "static_dynamic_ip_address_allocation", "allocation_type", "ip_address_allocation"),
     "duration_seconds": ("duration_seconds", "duration", "session_duration", "duration_sec", "duration_s"),
     "bytes_up": ("bytes_up", "uplink_bytes", "upload_bytes", "tx_bytes", "bytes_sent", "sent_bytes"),
@@ -185,6 +206,8 @@ class EvidenceStore:
         self.evidence_dir = self.storage_dir / "evidence_files"
         self.storage_file = self.storage_dir / "evidence_store.json"
         self._lock = RLock()
+        self.cases: list[CaseRecord] = []
+        self.import_specs: list[ImportSpecification] = []
         self.uploads: list[UploadStatus] = []
         self.sessions: list[SessionRecord] = []
         self.extractions: list[ExtractionResult] = []
@@ -200,11 +223,15 @@ class EvidenceStore:
 
     def _load(self) -> None:
         if not self.storage_file.exists():
+            self.cases = self._default_cases()
+            self.import_specs = self._default_import_specs()
             self.platform_ranges = self._default_platform_ranges()
             self._save()
             return
         try:
             payload = json.loads(self.storage_file.read_text(encoding="utf-8"))
+            self.cases = [CaseRecord.model_validate(item) for item in payload.get("cases", [])] or self._default_cases()
+            self.import_specs = [ImportSpecification.model_validate(item) for item in payload.get("import_specs", [])] or self._default_import_specs()
             self.uploads = [UploadStatus.model_validate(item) for item in payload.get("uploads", [])]
             self.sessions = [SessionRecord.model_validate(item) for item in payload.get("sessions", [])]
             self.extractions = [ExtractionResult.model_validate(item) for item in payload.get("extractions", [])]
@@ -219,6 +246,8 @@ class EvidenceStore:
         payload = {
             "version": STORE_VERSION,
             "saved_at": now_ist().isoformat(),
+            "cases": [item.model_dump(mode="json") for item in self.cases],
+            "import_specs": [item.model_dump(mode="json") for item in self.import_specs],
             "uploads": [item.model_dump(mode="json") for item in self.uploads],
             "sessions": [item.model_dump(mode="json") for item in self.sessions],
             "extractions": [item.model_dump(mode="json") for item in self.extractions],
@@ -230,6 +259,59 @@ class EvidenceStore:
         tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         tmp_path.replace(self.storage_file)
 
+    def _default_cases(self) -> list[CaseRecord]:
+        timestamp = now_ist()
+        return [
+            CaseRecord(
+                id="CASE-GENERAL",
+                name="General Evidence Intake",
+                crime_type="Unspecified",
+                io_name="System",
+                description="Default case for uncategorized IPDR evidence.",
+                targets=[],
+                tags=["default"],
+                status="active",
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+        ]
+
+    def _default_import_specs(self) -> list[ImportSpecification]:
+        timestamp = now_ist()
+        return [
+            ImportSpecification(
+                id="SPEC-DOT-NAT",
+                name="DoT IPDR / NAT SYSLOG",
+                description="Canonical mapping for DoT-style source, translated, and destination endpoint records.",
+                delimiter=None,
+                mapping={
+                    "msisdn": "MSISDN",
+                    "source_ip": "Source IP Address",
+                    "source_port": "Source Port",
+                    "translated_ip": "Translated IP Address",
+                    "translated_port": "Translated Port",
+                    "destination_ip": "Destination IP Address",
+                    "destination_port": "Destination Port",
+                    "start_date": "Start Date",
+                    "start_time": "Start Time",
+                    "end_date": "End Date",
+                    "end_time": "End Time",
+                    "imei": "IMEI",
+                    "imsi": "IMSI",
+                    "domain": "Domain",
+                    "cell_id": "Cell ID",
+                    "tower_name": "Tower Name",
+                    "city": "City",
+                    "state": "State",
+                    "country": "Country",
+                    "latitude": "Latitude",
+                    "longitude": "Longitude",
+                    "sim_type": "SIM Type",
+                },
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+        ]
     def _default_platform_ranges(self) -> list[PlatformRange]:
         ranges: list[PlatformRange] = []
         counter = 1
@@ -254,6 +336,7 @@ class EvidenceStore:
         with self._lock:
             confidences = [session.confidence for session in self.sessions]
             return DashboardStats(
+                cases=len(self.cases),
                 uploads=len(self.uploads),
                 sessions=len(self.sessions),
                 actionable=sum(1 for session in self.sessions if session.classification == "p2p"),
@@ -262,8 +345,98 @@ class EvidenceStore:
                 quarantined_rows=sum(upload.rows_quarantined for upload in self.uploads),
                 avg_confidence=round(sum(confidences) / len(confidences), 2) if confidences else 0,
                 latest_upload=max(self.uploads, key=lambda item: item.created_at) if self.uploads else None,
+                top_crime_types=self._crime_type_counts(),
             )
 
+    def _crime_type_counts(self) -> list[dict[str, Any]]:
+        counts: dict[str, int] = defaultdict(int)
+        for case in self.cases:
+            counts[case.crime_type or "Unspecified"] += 1
+        return [{"crime_type": key, "cases": value} for key, value in sorted(counts.items(), key=lambda item: (-item[1], item[0]))]
+
+    def list_cases(self) -> list[CaseRecord]:
+        with self._lock:
+            return sorted(self.cases, key=lambda item: item.updated_at, reverse=True)
+
+    def get_case(self, case_id: str | None) -> CaseRecord | None:
+        target_id = case_id or "CASE-GENERAL"
+        with self._lock:
+            return next((item for item in self.cases if item.id == target_id), None)
+
+    def create_case(self, payload: CaseCreate) -> CaseRecord:
+        timestamp = now_ist()
+        case = CaseRecord(
+            id=f"CASE-{uuid.uuid4().hex[:8]}",
+            name=payload.name.strip(),
+            crime_type=payload.crime_type.strip() or "Unspecified",
+            io_name=payload.io_name.strip() or "Unassigned",
+            description=payload.description.strip(),
+            targets=[self._parse_msisdn(value, "targets") for value in payload.targets if value.strip()],
+            tags=[value.strip() for value in payload.tags if value.strip()],
+            status="active",
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        with self._lock:
+            self.cases.append(case)
+            self._audit_unlocked("case_created", "case", case.id, {"name": case.name, "crime_type": case.crime_type})
+            self._save()
+        return case
+
+    def list_import_specs(self) -> list[ImportSpecification]:
+        with self._lock:
+            return sorted(self.import_specs, key=lambda item: item.updated_at, reverse=True)
+
+    def get_import_spec(self, spec_id: str | None) -> ImportSpecification | None:
+        if not spec_id:
+            return None
+        with self._lock:
+            return next((item for item in self.import_specs if item.id == spec_id), None)
+
+    def create_import_spec(self, payload: ImportSpecCreate) -> ImportSpecification:
+        timestamp = now_ist()
+        spec = ImportSpecification(
+            id=f"SPEC-{uuid.uuid4().hex[:8]}",
+            name=payload.name.strip(),
+            description=payload.description.strip(),
+            mapping={self._normalize_key(key): value.strip() for key, value in payload.mapping.items() if key.strip() and value.strip()},
+            delimiter=payload.delimiter,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        with self._lock:
+            self.import_specs.append(spec)
+            self._audit_unlocked("import_spec_created", "import_spec", spec.id, {"name": spec.name, "fields": sorted(spec.mapping)})
+            self._save()
+        return spec
+
+    def _resolve_case_id(self, case_id: str | None) -> str:
+        target_id = case_id or "CASE-GENERAL"
+        if self.get_case(target_id) is None:
+            raise UploadValidationError(f"Case not found: {target_id}")
+        return target_id
+
+    def _apply_import_spec(self, rows: list[dict[str, Any]], spec: ImportSpecification) -> list[dict[str, Any]]:
+        mapped_rows: list[dict[str, Any]] = []
+        for row in rows:
+            normalized_lookup = {self._normalize_key(str(key)): key for key in row.keys() if key is not None}
+            mapped = dict(row)
+            for canonical, source_column in spec.mapping.items():
+                source_key = normalized_lookup.get(self._normalize_key(source_column))
+                if source_key is not None:
+                    mapped[canonical] = row[source_key]
+            mapped_rows.append(mapped)
+        return mapped_rows
+
+    def _missing_required_after_mapping(self, rows: list[dict[str, Any]]) -> list[str]:
+        if not rows:
+            return ["msisdn", "source_ip", "source_port", "destination_ip", "destination_port"]
+        normalized_columns = {self._normalize_key(str(column)) for column in rows[0].keys() if column is not None}
+        missing: list[str] = []
+        for canonical in ("msisdn", "source_ip", "source_port", "destination_ip", "destination_port"):
+            if not normalized_columns.intersection(COLUMN_ALIASES[canonical]):
+                missing.append(canonical)
+        return missing
     def list_uploads(self) -> list[UploadStatus]:
         with self._lock:
             return sorted(self.uploads, key=lambda item: item.created_at, reverse=True)
@@ -276,19 +449,33 @@ class EvidenceStore:
         upload = self.get_upload(upload_id)
         return None if upload is None else upload.quarantine_errors
 
-    def ingest_upload(self, filename: str, content: bytes) -> UploadStatus:
+    def ingest_upload(self, filename: str, content: bytes, case_id: str | None = None, import_spec_id: str | None = None) -> UploadStatus:
         if not content:
             raise UploadValidationError("Uploaded file is empty")
 
         safe_filename = self._safe_filename(filename or "ipdr_upload.csv")
+        resolved_case_id = self._resolve_case_id(case_id)
+        import_spec = self.get_import_spec(import_spec_id)
+        if import_spec_id and import_spec is None:
+            raise UploadValidationError(f"Import specification not found: {import_spec_id}")
         try:
             parsed_upload = parse_ipdr_upload(safe_filename, content)
         except IngestionError as exc:
             raise UploadValidationError(str(exc)) from exc
-        if parsed_upload.report.missing_required:
-            missing = ", ".join(parsed_upload.report.missing_required)
-            raise UploadValidationError(f"Missing required column(s): {missing}")
         rows = parsed_upload.rows
+        report = parsed_upload.report
+        if import_spec is not None:
+            rows = self._apply_import_spec(rows, import_spec)
+            report = report.model_copy(
+                update={
+                    "adapter": f"Custom: {import_spec.name}",
+                    "missing_required": self._missing_required_after_mapping(rows),
+                    "notes": [*report.notes, f"Applied import specification {import_spec.id}"],
+                }
+            )
+        if report.missing_required:
+            missing = ", ".join(report.missing_required)
+            raise UploadValidationError(f"Missing required column(s): {missing}")
         if not rows:
             raise UploadValidationError("No IPDR data rows were found in the uploaded file")
 
@@ -300,7 +487,7 @@ class EvidenceStore:
         quarantine: list[QuarantineRecord] = []
         for row_number, row in enumerate(rows, start=1):
             try:
-                sessions.append(self._session_from_row(upload_id, safe_filename, row_number, row))
+                sessions.append(self._session_from_row(upload_id, safe_filename, row_number, row, resolved_case_id))
             except RowValidationError as exc:
                 quarantine.append(QuarantineRecord(row_number=row_number, field=exc.field, reason=exc.reason))
             except (TypeError, ValueError) as exc:
@@ -310,6 +497,8 @@ class EvidenceStore:
         upload = UploadStatus(
             id=upload_id,
             filename=safe_filename,
+            case_id=resolved_case_id,
+            import_spec_id=import_spec.id if import_spec else None,
             status=status,
             rows_total=len(rows),
             rows_valid=len(sessions),
@@ -319,7 +508,7 @@ class EvidenceStore:
             completed_at=now_ist(),
             message=self._upload_message(len(sessions), len(quarantine)),
             quarantine_errors=quarantine[:100],
-            format_report=parsed_upload.report,
+            format_report=report,
         )
 
         with self._lock:
@@ -334,9 +523,11 @@ class EvidenceStore:
                     "stored_path": str(stored_path),
                     "valid_rows": len(sessions),
                     "quarantined_rows": len(quarantine),
-                    "parser_engine": parsed_upload.report.parser_engine,
-                    "adapter": parsed_upload.report.adapter,
-                    "file_format": parsed_upload.report.file_format,
+                    "parser_engine": report.parser_engine,
+                    "adapter": report.adapter,
+                    "file_format": report.file_format,
+                    "case_id": resolved_case_id,
+                    "import_spec_id": import_spec.id if import_spec else None,
                 },
             )
             self._save()
@@ -349,7 +540,7 @@ class EvidenceStore:
             return f"Ingested {valid} rows"
         return f"No valid rows ingested; quarantined {quarantined} rows"
 
-    def _session_from_row(self, upload_id: str, filename: str, row_number: int, row: dict[str, Any]) -> SessionRecord:
+    def _session_from_row(self, upload_id: str, filename: str, row_number: int, row: dict[str, Any], case_id: str = "CASE-GENERAL") -> SessionRecord:
         normalized = {self._normalize_key(str(key)): self._clean_value(value) for key, value in row.items() if key is not None}
         msisdn = self._parse_msisdn(self._first(normalized, "msisdn"), "msisdn")
         source_ip, source_port = self._parse_endpoint(normalized, "source_ip", "source_port", "source")
@@ -368,6 +559,7 @@ class EvidenceStore:
         return SessionRecord(
             id=f"SES-{uuid.uuid4().hex[:8]}",
             upload_id=upload_id,
+            case_id=case_id,
             a_party_msisdn=msisdn,
             subscriber_name=self._optional(normalized, "subscriber_name"),
             subscriber_address=self._optional(normalized, "subscriber_address"),
@@ -382,6 +574,14 @@ class EvidenceStore:
             translated_port=translated_port,
             destination_ip=destination_ip,
             destination_port=destination_port,
+            domain=self._optional(normalized, "domain"),
+            cell_id=self._optional(normalized, "cell_id"),
+            tower_name=self._optional(normalized, "tower_name"),
+            city=self._optional(normalized, "city"),
+            state=self._optional(normalized, "state"),
+            country=self._optional(normalized, "country"),
+            latitude=self._parse_optional_float(self._optional(normalized, "latitude"), "latitude"),
+            longitude=self._parse_optional_float(self._optional(normalized, "longitude"), "longitude"),
             ip_allocation=self._optional(normalized, "ip_allocation"),
             protocol=protocol,
             started_at=started_at,
@@ -502,6 +702,14 @@ class EvidenceStore:
             raise RowValidationError(field, f"{field} must be at most {maximum}")
         return parsed
 
+    def _parse_optional_float(self, value: str | None, field: str) -> float | None:
+        if value in (None, ""):
+            return None
+        try:
+            return float(value.replace(",", ""))
+        except ValueError as exc:
+            raise RowValidationError(field, f"{field} must be numeric") from exc
+
     def _parse_protocol(self, value: str) -> str:
         cleaned = value.strip().upper()
         if not cleaned:
@@ -548,6 +756,14 @@ class EvidenceStore:
         q: str | None = None,
         msisdn: str | None = None,
         classification: str | None = None,
+        case_id: str | None = None,
+        destination_ip: str | None = None,
+        imei: str | None = None,
+        app: str | None = None,
+        domain: str | None = None,
+        cell_id: str | None = None,
+        started_from: str | None = None,
+        started_to: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[SessionRecord]:
@@ -558,6 +774,27 @@ class EvidenceStore:
             sessions = [session for session in sessions if needle_msisdn in session.a_party_msisdn]
         if classification:
             sessions = [session for session in sessions if session.classification == classification]
+        if case_id:
+            sessions = [session for session in sessions if session.case_id == case_id]
+        if destination_ip:
+            sessions = [session for session in sessions if destination_ip in session.destination_ip]
+        if imei:
+            sessions = [session for session in sessions if imei in (session.imei or "")]
+        if app:
+            needle_app = app.lower()
+            sessions = [session for session in sessions if needle_app in session.app_hint.lower() or needle_app in session.operator.lower()]
+        if domain:
+            needle_domain = domain.lower()
+            sessions = [session for session in sessions if needle_domain in (session.domain or "").lower()]
+        if cell_id:
+            needle_cell = cell_id.lower()
+            sessions = [session for session in sessions if needle_cell in (session.cell_id or "").lower()]
+        if started_from:
+            from_dt = self._parse_timestamp(started_from, 0, required=True, field="started_from")
+            sessions = [session for session in sessions if session.started_at >= from_dt]
+        if started_to:
+            to_dt = self._parse_timestamp(started_to, 0, required=True, field="started_to")
+            sessions = [session for session in sessions if session.started_at <= to_dt]
         if q:
             needle = q.lower()
             sessions = [
@@ -568,6 +805,10 @@ class EvidenceStore:
                 or needle in (session.source_ip or "").lower()
                 or needle in (session.translated_ip or "").lower()
                 or needle in session.operator.lower()
+                or needle in session.app_hint.lower()
+                or needle in (session.domain or "").lower()
+                or needle in (session.cell_id or "").lower()
+                or needle in (session.imei or "").lower()
                 or needle in session.source_file.lower()
             ]
         bounded_limit = max(1, min(limit, 10_000))
@@ -701,10 +942,11 @@ class EvidenceStore:
         self,
         msisdn: str | None = None,
         classification: str | None = None,
+        case_id: str | None = None,
         limit: int = 5_000,
     ) -> CommunicationGraph:
         normalized_classification = None if classification in (None, "all") else classification
-        sessions = self.list_sessions(msisdn=msisdn, classification=normalized_classification, limit=limit)
+        sessions = self.list_sessions(msisdn=msisdn, classification=normalized_classification, case_id=case_id, limit=limit)
         nodes: dict[str, dict[str, Any]] = {}
         links: dict[str, dict[str, Any]] = {}
 
@@ -907,6 +1149,262 @@ class EvidenceStore:
         severity_rank = {"high": 0, "medium": 1, "low": 2}
         patterns.sort(key=lambda item: (severity_rank[item.severity], -item.score, item.title))
         return patterns[: max(1, min(limit, 100))]
+
+    def timeline(self, bucket: str = "hour", case_id: str | None = None, msisdn: str | None = None) -> list[TimelinePoint]:
+        sessions = self.list_sessions(case_id=case_id, msisdn=msisdn, limit=10_000)
+        formats = {
+            "year": ("%Y", "%Y"),
+            "month": ("%Y-%m", "%b %Y"),
+            "day": ("%Y-%m-%d", "%d %b %Y"),
+            "hour": ("%Y-%m-%d %H", "%d %b %H:00"),
+            "minute": ("%Y-%m-%d %H:%M", "%H:%M"),
+            "second": ("%Y-%m-%d %H:%M:%S", "%H:%M:%S"),
+        }
+        key_format, label_format = formats.get(bucket, formats["hour"])
+        grouped: dict[str, dict[str, Any]] = {}
+        for session in sessions:
+            key = session.started_at.strftime(key_format)
+            item = grouped.setdefault(
+                key,
+                {"bucket": key, "label": session.started_at.strftime(label_format), "sessions": 0, "p2p": 0, "relay": 0, "unknown": 0, "bytes_total": 0},
+            )
+            item["sessions"] += 1
+            item[session.classification] += 1
+            item["bytes_total"] += session.bytes_up + session.bytes_down
+        return [TimelinePoint.model_validate(grouped[key]) for key in sorted(grouped)]
+
+    def application_summary(self, case_id: str | None = None, limit: int = 10) -> list[ApplicationSummary]:
+        sessions = self.list_sessions(case_id=case_id, limit=10_000)
+        grouped: dict[str, dict[str, Any]] = {}
+        for session in sessions:
+            key = session.app_hint or session.operator or "Unknown"
+            item = grouped.setdefault(
+                key,
+                {"name": key, "operator": session.operator, "sessions": 0, "msisdns": set(), "destination_ips": set(), "duration_seconds": 0, "bytes_total": 0},
+            )
+            item["sessions"] += 1
+            item["msisdns"].add(session.a_party_msisdn)
+            item["destination_ips"].add(session.destination_ip)
+            item["duration_seconds"] += session.duration_seconds
+            item["bytes_total"] += session.bytes_up + session.bytes_down
+            if item["operator"] != session.operator:
+                item["operator"] = "Multiple"
+        rows = []
+        for item in grouped.values():
+            rows.append(
+                ApplicationSummary(
+                    name=item["name"],
+                    operator=item["operator"],
+                    sessions=item["sessions"],
+                    msisdns=len(item["msisdns"]),
+                    destination_ips=len(item["destination_ips"]),
+                    duration_seconds=item["duration_seconds"],
+                    bytes_total=item["bytes_total"],
+                )
+            )
+        return sorted(rows, key=lambda item: (-item.sessions, -item.bytes_total, item.name))[: max(1, min(limit, 100))]
+
+    def common_applications(self, case_id: str | None = None, msisdns: list[str] | None = None, limit: int = 10) -> list[CommonApplicationReport]:
+        sessions = self.list_sessions(case_id=case_id, limit=10_000)
+        if msisdns:
+            targets = {self._parse_msisdn(value, "msisdns") for value in msisdns if value.strip()}
+            sessions = [session for session in sessions if session.a_party_msisdn in targets]
+        grouped: dict[str, dict[str, Any]] = {}
+        for session in sessions:
+            key = session.app_hint or session.domain or session.operator or "Unknown"
+            item = grouped.setdefault(
+                key,
+                {
+                    "name": key,
+                    "sessions": 0,
+                    "poi_msisdns": set(),
+                    "destination_ips": set(),
+                    "total_duration_seconds": 0,
+                    "total_bytes": 0,
+                    "times": [],
+                },
+            )
+            item["sessions"] += 1
+            item["poi_msisdns"].add(session.a_party_msisdn)
+            item["destination_ips"].add(session.destination_ip)
+            item["total_duration_seconds"] += session.duration_seconds
+            item["total_bytes"] += session.bytes_up + session.bytes_down
+            item["times"].append(session.started_at)
+        rows: list[CommonApplicationReport] = []
+        for item in grouped.values():
+            if len(item["poi_msisdns"]) < 2 and not msisdns:
+                continue
+            rows.append(
+                CommonApplicationReport(
+                    name=item["name"],
+                    sessions=item["sessions"],
+                    poi_msisdns=sorted(item["poi_msisdns"]),
+                    destination_ips=sorted(item["destination_ips"]),
+                    total_duration_seconds=item["total_duration_seconds"],
+                    total_bytes=item["total_bytes"],
+                    first_seen=min(item["times"]) if item["times"] else None,
+                    last_seen=max(item["times"]) if item["times"] else None,
+                )
+            )
+        return sorted(rows, key=lambda item: (-len(item.poi_msisdns), -item.sessions, item.name))[: max(1, min(limit, 100))]
+
+    def imei_frequency(self, case_id: str | None = None, msisdn: str | None = None, limit: int = 20) -> list[ImeiFrequencyReport]:
+        sessions = self.list_sessions(case_id=case_id, msisdn=msisdn, limit=10_000)
+        grouped: dict[str, dict[str, Any]] = {}
+        for session in sessions:
+            if not session.imei:
+                continue
+            item = grouped.setdefault(session.imei, {"sessions": 0, "msisdns": set(), "times": []})
+            item["sessions"] += 1
+            item["msisdns"].add(session.a_party_msisdn)
+            item["times"].append(session.started_at)
+        rows = [
+            ImeiFrequencyReport(
+                imei=imei,
+                sessions=item["sessions"],
+                msisdns=sorted(item["msisdns"]),
+                first_seen=min(item["times"]) if item["times"] else None,
+                last_seen=max(item["times"]) if item["times"] else None,
+                handset_hint=f"TAC {imei[:8]}" if len(imei) >= 8 else None,
+            )
+            for imei, item in grouped.items()
+        ]
+        return sorted(rows, key=lambda item: (-item.sessions, item.imei))[: max(1, min(limit, 100))]
+
+    def location_summary(self, case_id: str | None = None, msisdn: str | None = None, limit: int = 20) -> list[LocationSummaryReport]:
+        sessions = self.list_sessions(case_id=case_id, msisdn=msisdn, limit=10_000)
+        grouped: dict[str, dict[str, Any]] = {}
+        for session in sessions:
+            key = session.cell_id or " | ".join(part for part in (session.city, session.state, session.country) if part)
+            if not key:
+                continue
+            label = session.tower_name or key
+            item = grouped.setdefault(
+                key,
+                {
+                    "key": key,
+                    "label": label,
+                    "sessions": 0,
+                    "day_sessions": 0,
+                    "night_sessions": 0,
+                    "msisdns": set(),
+                    "times": [],
+                    "latitude": session.latitude,
+                    "longitude": session.longitude,
+                },
+            )
+            item["sessions"] += 1
+            if 6 <= session.started_at.hour < 18:
+                item["day_sessions"] += 1
+            else:
+                item["night_sessions"] += 1
+            item["msisdns"].add(session.a_party_msisdn)
+            item["times"].append(session.started_at)
+            item["latitude"] = item["latitude"] if item["latitude"] is not None else session.latitude
+            item["longitude"] = item["longitude"] if item["longitude"] is not None else session.longitude
+        rows = [
+            LocationSummaryReport(
+                key=item["key"],
+                label=item["label"],
+                sessions=item["sessions"],
+                day_sessions=item["day_sessions"],
+                night_sessions=item["night_sessions"],
+                msisdns=sorted(item["msisdns"]),
+                first_seen=min(item["times"]) if item["times"] else None,
+                last_seen=max(item["times"]) if item["times"] else None,
+                latitude=item["latitude"],
+                longitude=item["longitude"],
+            )
+            for item in grouped.values()
+        ]
+        return sorted(rows, key=lambda item: (-item.sessions, item.label))[: max(1, min(limit, 100))]
+
+    def poi_summary(self, msisdn: str, case_id: str | None = None) -> PoiSummaryReport:
+        normalized_msisdn = self._parse_msisdn(msisdn, "msisdn")
+        sessions = self.list_sessions(msisdn=normalized_msisdn, case_id=case_id, limit=10_000)
+        total_bytes = sum(session.bytes_up + session.bytes_down for session in sessions)
+        by_destination: dict[str, dict[str, Any]] = defaultdict(lambda: {"sessions": 0, "bytes_total": 0, "classification": "unknown", "operator": "Unknown"})
+        by_application: dict[str, int] = defaultdict(int)
+        for session in sessions:
+            endpoint = f"{session.destination_ip}:{session.destination_port}"
+            by_destination[endpoint]["sessions"] += 1
+            by_destination[endpoint]["bytes_total"] += session.bytes_up + session.bytes_down
+            by_destination[endpoint]["classification"] = self._merge_classification(by_destination[endpoint]["classification"], session.classification)
+            by_destination[endpoint]["operator"] = session.operator
+            by_application[session.app_hint] += 1
+        times = [session.started_at for session in sessions]
+        return PoiSummaryReport(
+            msisdn=normalized_msisdn,
+            total_sessions=len(sessions),
+            p2p=sum(1 for session in sessions if session.classification == "p2p"),
+            relay=sum(1 for session in sessions if session.classification == "relay"),
+            unknown=sum(1 for session in sessions if session.classification == "unknown"),
+            first_seen=min(times) if times else None,
+            last_seen=max(times) if times else None,
+            total_bytes=total_bytes,
+            imeis=sorted({session.imei for session in sessions if session.imei}),
+            applications=[{"name": key, "sessions": value} for key, value in sorted(by_application.items(), key=lambda item: (-item[1], item[0]))[:10]],
+            top_destinations=[{"endpoint": key, **value} for key, value in sorted(by_destination.items(), key=lambda item: (-item[1]["sessions"], -item[1]["bytes_total"]))[:10]],
+        )
+
+    def ip_summary(self, destination_ip: str, case_id: str | None = None) -> IpSummaryReport:
+        ip_value = self._parse_ip(destination_ip, "destination_ip")
+        sessions = self.list_sessions(destination_ip=ip_value, case_id=case_id, limit=10_000)
+        times = [session.started_at for session in sessions]
+        classification = "unknown"
+        operator = "Unknown"
+        for session in sessions:
+            classification = self._merge_classification(classification, session.classification)
+            operator = session.operator if operator in {"Unknown", session.operator} else "Multiple"
+        return IpSummaryReport(
+            destination_ip=ip_value,
+            total_sessions=len(sessions),
+            msisdns=sorted({session.a_party_msisdn for session in sessions}),
+            ports=sorted({session.destination_port for session in sessions}),
+            operator=operator,
+            classification=classification,
+            first_seen=min(times) if times else None,
+            last_seen=max(times) if times else None,
+            total_bytes=sum(session.bytes_up + session.bytes_down for session in sessions),
+        )
+
+    def export_sessions_csv(self, case_id: str | None = None) -> str:
+        output = io.StringIO()
+        fields = [
+            "case_id",
+            "a_party_msisdn",
+            "source_ip",
+            "source_port",
+            "translated_ip",
+            "translated_port",
+            "destination_ip",
+            "destination_port",
+            "domain",
+            "cell_id",
+            "city",
+            "state",
+            "country",
+            "latitude",
+            "longitude",
+            "protocol",
+            "started_at",
+            "ended_at",
+            "duration_seconds",
+            "bytes_up",
+            "bytes_down",
+            "imei",
+            "imsi",
+            "classification",
+            "confidence",
+            "source_file",
+            "row_number",
+        ]
+        writer = csv.DictWriter(output, fieldnames=fields)
+        writer.writeheader()
+        for session in self.list_sessions(case_id=case_id, limit=10_000):
+            data = session.model_dump(mode="json")
+            writer.writerow({field: data.get(field, "") for field in fields})
+        return output.getvalue()
 
     def _pattern_id(self, pattern_type: str, key: str) -> str:
         return f"SIG-{uuid.uuid5(uuid.NAMESPACE_URL, f'pramaan-ipdr:{pattern_type}:{key}').hex[:8]}"

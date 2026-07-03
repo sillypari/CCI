@@ -5,6 +5,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
+  BriefcaseBusiness,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -13,6 +15,7 @@ import {
   Database,
   Download,
   FileJson,
+  FileSpreadsheet,
   FileText,
   Filter,
   Gauge,
@@ -45,16 +48,20 @@ const pageMotion = {
 
 const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
+  { icon: BriefcaseBusiness, label: "Cases", path: "/cases" },
   { icon: Upload, label: "File Upload", path: "/uploads" },
   { icon: Database, label: "Sessions", path: "/sessions" },
   { icon: Target, label: "B-Party Extraction", path: "/extractions" },
   { icon: Network, label: "Communication Map", path: "/map" },
+  { icon: BarChart3, label: "Analytics", path: "/analytics" },
+  { icon: FileSpreadsheet, label: "Reports", path: "/reports" },
   { icon: FileText, label: "Request Packages", path: "/packages" },
   { icon: Clipboard, label: "Audit Log", path: "/audit" },
   { icon: Settings, label: "Settings", path: "/settings" }
 ];
 
 const emptyStats = {
+  cases: 0,
   uploads: 0,
   sessions: 0,
   actionable: 0,
@@ -62,7 +69,8 @@ const emptyStats = {
   unknown: 0,
   quarantined_rows: 0,
   avg_confidence: 0,
-  latest_upload: null
+  latest_upload: null,
+  top_crime_types: []
 };
 
 const emptyGraphData = {
@@ -84,6 +92,8 @@ const emptyGraphData = {
 
 const initialState = {
   stats: emptyStats,
+  cases: [],
+  importSpecs: [],
   uploads: [],
   sessions: [],
   graph: emptyGraphData,
@@ -91,7 +101,9 @@ const initialState = {
   extractions: [],
   packages: [],
   auditLogs: [],
-  platformRanges: []
+  platformRanges: [],
+  timeline: [],
+  applications: []
 };
 
 function App() {
@@ -110,18 +122,22 @@ function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const [stats, uploads, sessions, graph, patterns, extractions, packagesList, auditLogs, platformRanges] = await Promise.all([
+      const [stats, cases, importSpecs, uploads, sessions, graph, patterns, timeline, applications, extractions, packagesList, auditLogs, platformRanges] = await Promise.all([
         api.dashboard(),
+        api.cases(),
+        api.importSpecs(),
         api.uploads(),
         api.sessions(),
         api.graph(),
         api.patterns(),
+        api.timeline(),
+        api.applications(),
         api.extractions(),
         api.packages(),
         api.auditLogs(),
         api.platformRanges()
       ]);
-      setData({ stats, uploads, sessions, graph: normalizeGraphResponse(graph), patterns, extractions, packages: packagesList, auditLogs, platformRanges });
+      setData({ stats, cases, importSpecs, uploads, sessions, graph: normalizeGraphResponse(graph), patterns, timeline, applications, extractions, packages: packagesList, auditLogs, platformRanges });
       setApiLive(true);
       setApiError("");
     } catch (error) {
@@ -135,9 +151,9 @@ function App() {
   }, [refresh]);
 
   const uploadFile = useCallback(
-    async (file) => {
+    async (file, options = {}) => {
       try {
-        const upload = await api.upload(file);
+        const upload = await api.upload(file, options);
         pushToast(upload.status === "failed" ? "warning" : "success", upload.status === "failed" ? "Upload quarantined" : "Upload processed", upload.message ?? file.name);
         await refresh();
         return upload.status !== "failed";
@@ -175,19 +191,52 @@ function App() {
     [pushToast]
   );
 
+
+  const createCase = useCallback(
+    async (payload) => {
+      try {
+        const created = await api.createCase(payload);
+        await refresh();
+        pushToast("success", "Case created", created.name);
+        return created;
+      } catch (error) {
+        pushToast("error", "Case failed", error.message);
+        return null;
+      }
+    },
+    [pushToast, refresh]
+  );
+
+  const createImportSpec = useCallback(
+    async (payload) => {
+      try {
+        const spec = await api.createImportSpec(payload);
+        await refresh();
+        pushToast("success", "Import spec saved", spec.name);
+        return spec;
+      } catch (error) {
+        pushToast("error", "Import spec failed", error.message);
+        return null;
+      }
+    },
+    [pushToast, refresh]
+  );
   return (
     <>
       <Shell apiLive={apiLive} apiError={apiError}>
         <AnimatePresence mode="wait">
           <Routes>
             <Route path="/" element={<DashboardPage data={data} />} />
-            <Route path="/uploads" element={<UploadsPage uploads={data.uploads} uploadFile={uploadFile} />} />
+            <Route path="/cases" element={<CasesPage cases={data.cases} stats={data.stats} createCase={createCase} />} />
+            <Route path="/uploads" element={<UploadsPage uploads={data.uploads} cases={data.cases} importSpecs={data.importSpecs} uploadFile={uploadFile} />} />
             <Route path="/sessions" element={<SessionsPage sessions={data.sessions} />} />
             <Route path="/extractions" element={<ExtractionsPage extractions={data.extractions} runExtraction={runExtraction} />} />
             <Route path="/map" element={<MapPage initialGraph={data.graph} runExtraction={runExtraction} />} />
+            <Route path="/analytics" element={<AnalyticsPage timeline={data.timeline} applications={data.applications} patterns={data.patterns} />} />
+            <Route path="/reports" element={<ReportsPage sessions={data.sessions} />} />
             <Route path="/packages" element={<PackagesPage packagesList={data.packages} />} />
             <Route path="/audit" element={<AuditPage auditLogs={data.auditLogs} />} />
-            <Route path="/settings" element={<SettingsPage ranges={data.platformRanges} stats={data.stats} apiLive={apiLive} />} />
+            <Route path="/settings" element={<SettingsPage ranges={data.platformRanges} stats={data.stats} apiLive={apiLive} importSpecs={data.importSpecs} createImportSpec={createImportSpec} />} />
           </Routes>
         </AnimatePresence>
       </Shell>
@@ -370,15 +419,90 @@ function SignalList({ patterns }) {
     </div>
   );
 }
-function UploadsPage({ uploads, uploadFile }) {
+function CasesPage({ cases, stats, createCase }) {
+  const [form, setForm] = useState({ name: "", crime_type: "Cybercrime", io_name: "", targets: "", tags: "" });
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!form.name.trim()) return;
+    const created = await createCase({
+      name: form.name,
+      crime_type: form.crime_type,
+      io_name: form.io_name || "Unassigned",
+      targets: splitList(form.targets),
+      tags: splitList(form.tags),
+      description: ""
+    });
+    if (created) setForm({ name: "", crime_type: "Cybercrime", io_name: "", targets: "", tags: "" });
+  };
+
+  return (
+    <motion.section {...pageMotion} className="page-grid">
+      <section className="case-ribbon span-12 compact-ribbon">
+        <div className="case-ribbon__main">
+          <span className="eyebrow">Case workspace</span>
+          <h1>Evidence organized by investigation</h1>
+          <p>{number(stats.cases)} cases | {number(stats.uploads)} uploads | {number(stats.sessions)} normalized sessions</p>
+        </div>
+      </section>
+      <section className="panel span-5">
+        <PanelHeader icon={BriefcaseBusiness} title="Create Case" />
+        <form className="stack" onSubmit={submit}>
+          <label className="field"><span>Case name</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Operation / FIR / complaint reference" /></label>
+          <label className="field"><span>Crime type</span><input value={form.crime_type} onChange={(event) => setForm({ ...form, crime_type: event.target.value })} placeholder="Cybercrime, fraud, extortion" /></label>
+          <label className="field"><span>Investigating officer</span><input value={form.io_name} onChange={(event) => setForm({ ...form, io_name: event.target.value })} placeholder="Officer name" /></label>
+          <label className="field"><span>Targets</span><input value={form.targets} onChange={(event) => setForm({ ...form, targets: event.target.value })} placeholder="Comma separated MSISDNs" /></label>
+          <label className="field"><span>Tags</span><input value={form.tags} onChange={(event) => setForm({ ...form, tags: event.target.value })} placeholder="watchlist, urgent" /></label>
+          <Button icon={BriefcaseBusiness} disabled={!form.name.trim()}>Create case</Button>
+        </form>
+      </section>
+      <section className="panel span-7">
+        <PanelHeader icon={Database} title="Case List" action={<Badge tone="brand">{cases.length}</Badge>} />
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Case</th><th>Crime</th><th>IO</th><th>Targets</th><th>Status</th></tr></thead>
+            <tbody>
+              {cases.length ? cases.map((item) => (
+                <tr key={item.id}>
+                  <td><strong>{item.name}</strong><br /><span className="mono">{item.id}</span></td>
+                  <td>{item.crime_type}</td>
+                  <td>{item.io_name}</td>
+                  <td className="mono">{(item.targets ?? []).join(", ") || "-"}</td>
+                  <td><Badge tone={item.status === "active" ? "success" : "neutral"}>{item.status}</Badge></td>
+                </tr>
+              )) : <TableEmptyRow colSpan={5} label="No cases created" />}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </motion.section>
+  );
+}
+function UploadsPage({ uploads, cases = [], importSpecs = [], uploadFile }) {
   const [activeFile, setActiveFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputId = useId();
+  const [caseId, setCaseId] = useState("CASE-GENERAL");
+  const [importSpecId, setImportSpecId] = useState("");
+  const caseOptions = useMemo(
+    () => (cases.length ? cases : [{ id: "CASE-GENERAL", name: "General Evidence Intake" }]).map((item) => ({ value: item.id, label: item.name })),
+    [cases]
+  );
+  const specOptions = useMemo(
+    () => [{ value: "", label: "Auto detect" }, ...importSpecs.map((item) => ({ value: item.id, label: item.name }))],
+    [importSpecs]
+  );
+
+  useEffect(() => {
+    if (!caseOptions.some((item) => item.value === caseId)) {
+      setCaseId(caseOptions[0]?.value ?? "CASE-GENERAL");
+    }
+  }, [caseId, caseOptions]);
 
   const submitUpload = async (event) => {
     event.preventDefault();
     if (activeFile) {
-      const uploaded = await uploadFile(activeFile);
+      const uploaded = await uploadFile(activeFile, { caseId, importSpecId });
       if (uploaded) {
         setActiveFile(null);
         event.currentTarget.reset();
@@ -420,6 +544,16 @@ function UploadsPage({ uploads, uploadFile }) {
             <span>{activeFile ? `${number(activeFile.size)} bytes ready for parsing` : "CSV, TSV, TXT, JSON, XLSX"}</span>
             <span className="upload-drop__action">{activeFile ? "Change file" : "Browse file"}</span>
           </label>
+          <div className="form-grid compact">
+            <div className="field">
+              <span>Case</span>
+              <SelectControl ariaLabel="Case" value={caseId} onChange={setCaseId} options={caseOptions} />
+            </div>
+            <div className="field">
+              <span>Import spec</span>
+              <SelectControl ariaLabel="Import specification" value={importSpecId} onChange={setImportSpecId} options={specOptions} />
+            </div>
+          </div>
           <Button icon={Upload} disabled={!activeFile}>
             Process file
           </Button>
@@ -635,6 +769,212 @@ function MapPage({ initialGraph, runExtraction }) {
     </motion.section>
   );
 }
+
+function AnalyticsPage({ timeline, applications, patterns }) {
+  const [bucket, setBucket] = useState("hour");
+  const [points, setPoints] = useState(timeline);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadTimeline = async () => {
+      try {
+        const payload = await api.timeline(`?bucket=${bucket}`);
+        if (!cancelled) setPoints(payload);
+      } catch {
+        if (!cancelled) setPoints(timeline);
+      }
+    };
+    loadTimeline();
+    return () => {
+      cancelled = true;
+    };
+  }, [bucket, timeline]);
+
+  const maxSessions = Math.max(1, ...points.map((item) => item.sessions));
+  return (
+    <motion.section {...pageMotion} className="page-grid">
+      <section className="panel span-8">
+        <PanelHeader
+          icon={BarChart3}
+          title="Timeline Analysis"
+          action={
+            <SelectControl
+              ariaLabel="Timeline bucket"
+              value={bucket}
+              onChange={setBucket}
+              options={[
+                { value: "year", label: "Year" },
+                { value: "month", label: "Month" },
+                { value: "day", label: "Day" },
+                { value: "hour", label: "Hour" },
+                { value: "minute", label: "Minute" },
+                { value: "second", label: "Second" }
+              ]}
+            />
+          }
+        />
+        <div className="timeline-chart">
+          {points.length ? points.map((item) => (
+            <div className="timeline-bar" key={item.bucket}>
+              <span className="timeline-bar__label">{item.label}</span>
+              <div className="timeline-bar__track"><span style={{ width: `${Math.max(4, (item.sessions / maxSessions) * 100)}%` }} /></div>
+              <strong>{item.sessions}</strong>
+            </div>
+          )) : <EmptyState label="No timeline data yet" />}
+        </div>
+      </section>
+      <section className="panel span-4">
+        <PanelHeader icon={Activity} title="Applications" action={<Badge tone="brand">{applications.length}</Badge>} />
+        <div className="signal-list compact-list">
+          {applications.length ? applications.map((item) => (
+            <article className="signal-row" key={item.name}>
+              <div><strong>{item.name}</strong><p>{item.operator} | {item.destination_ips} IPs | {formatDuration(item.duration_seconds)}</p></div>
+              <Badge tone="neutral">{item.sessions}</Badge>
+            </article>
+          )) : <EmptyState label="No application summary" />}
+        </div>
+      </section>
+      <section className="panel span-12">
+        <PanelHeader icon={AlertTriangle} title="Detection Signals" action={<Badge tone={patterns.length ? "warning" : "success"}>{patterns.length}</Badge>} />
+        {patterns.length ? <SignalList patterns={patterns} /> : <EmptyState label="No suspicious signals detected" />}
+      </section>
+    </motion.section>
+  );
+}
+
+function ReportsPage({ sessions }) {
+  const [poi, setPoi] = useState("");
+  const [ip, setIp] = useState("");
+  const [report, setReport] = useState(null);
+  const [commonApps, setCommonApps] = useState([]);
+  const [imeiRows, setImeiRows] = useState([]);
+  const [locationRows, setLocationRows] = useState([]);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadReports = async () => {
+      try {
+        const [apps, imeis, locations] = await Promise.all([api.commonApplications(), api.imeiFrequency(), api.locationSummary()]);
+        if (!cancelled) {
+          setCommonApps(apps);
+          setImeiRows(imeis);
+          setLocationRows(locations);
+        }
+      } catch {
+        if (!cancelled) {
+          setCommonApps([]);
+          setImeiRows([]);
+          setLocationRows([]);
+        }
+      }
+    };
+    loadReports();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessions]);
+
+  const runPoi = async (event) => {
+    event.preventDefault();
+    if (!poi.trim()) return;
+    setBusy(true);
+    try {
+      setReport({ type: "poi", payload: await api.poiReport(poi.trim()) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runIp = async (event) => {
+    event.preventDefault();
+    if (!ip.trim()) return;
+    setBusy(true);
+    try {
+      setReport({ type: "ip", payload: await api.ipReport(ip.trim()) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <motion.section {...pageMotion} className="page-grid">
+      <section className="panel span-5">
+        <PanelHeader icon={FileSpreadsheet} title="Report Builder" />
+        <form className="stack" onSubmit={runPoi}>
+          <label className="field"><span>PoI MSISDN</span><input value={poi} onChange={(event) => setPoi(event.target.value)} placeholder="Target mobile number" /></label>
+          <Button icon={FileSpreadsheet} disabled={busy || !poi.trim()}>{busy ? "Building" : "PoI summary"}</Button>
+        </form>
+        <form className="stack divided" onSubmit={runIp}>
+          <label className="field"><span>Destination IP</span><input value={ip} onChange={(event) => setIp(event.target.value)} placeholder="B-party IP" /></label>
+          <Button icon={Network} disabled={busy || !ip.trim()} variant="secondary">IP summary</Button>
+        </form>
+        <a className="text-link" href={api.sessionCsvUrl()}>Export sessions CSV</a>
+      </section>
+      <section className="panel span-7">
+        <PanelHeader icon={ShieldCheck} title="Report Preview" action={<Badge tone="brand">{sessions.length} rows</Badge>} />
+        {report ? <ReportPreview report={report} /> : <EmptyState label="Build a PoI or IP report" />}
+      </section>
+      <section className="panel span-4">
+        <PanelHeader icon={Activity} title="Common Applications" action={<Badge tone="brand">{commonApps.length}</Badge>} />
+        <div className="report-list">
+          {commonApps.length ? commonApps.map((item) => (
+            <article className="report-row" key={item.name}>
+              <strong>{item.name}</strong>
+              <span>{item.poi_msisdns.length} PoIs | {item.destination_ips.length} IPs | {formatDuration(item.total_duration_seconds)}</span>
+            </article>
+          )) : <EmptyState label="No common applications found" />}
+        </div>
+      </section>
+      <section className="panel span-4">
+        <PanelHeader icon={Database} title="IMEI Frequency" action={<Badge tone="brand">{imeiRows.length}</Badge>} />
+        <div className="report-list">
+          {imeiRows.length ? imeiRows.map((item) => (
+            <article className="report-row" key={item.imei}>
+              <strong className="mono">{item.imei}</strong>
+              <span>{item.sessions} sessions | {item.msisdns.length} MSISDNs | {item.handset_hint ?? "TAC unavailable"}</span>
+            </article>
+          )) : <EmptyState label="No IMEI values in evidence" />}
+        </div>
+      </section>
+      <section className="panel span-4">
+        <PanelHeader icon={LocateFixed} title="Location Summary" action={<Badge tone="brand">{locationRows.length}</Badge>} />
+        <div className="report-list">
+          {locationRows.length ? locationRows.map((item) => (
+            <article className="report-row" key={item.key}>
+              <strong>{item.label}</strong>
+              <span>{item.sessions} sessions | Day {item.day_sessions} | Night {item.night_sessions}</span>
+            </article>
+          )) : <EmptyState label="No cell tower/location columns found" />}
+        </div>
+      </section>
+    </motion.section>
+  );
+}
+function ReportPreview({ report }) {
+  const payload = report.payload;
+  if (report.type === "ip") {
+    return (
+      <div className="report-card">
+        <h3>{payload.destination_ip}</h3>
+        <div className="metric-row"><span>Sessions <strong>{payload.total_sessions}</strong></span><span>MSISDNs <strong>{payload.msisdns.length}</strong></span><span>Ports <strong>{payload.ports.join(", ") || "-"}</strong></span></div>
+        <p>{payload.operator} | {payload.classification} | {number(payload.total_bytes)} bytes</p>
+      </div>
+    );
+  }
+  return (
+    <div className="report-card">
+      <h3>{payload.msisdn}</h3>
+      <div className="metric-row"><span>Sessions <strong>{payload.total_sessions}</strong></span><span>P2P <strong>{payload.p2p}</strong></span><span>Relay <strong>{payload.relay}</strong></span></div>
+      <p>{number(payload.total_bytes)} bytes | IMEI {payload.imeis.join(", ") || "-"}</p>
+      <div className="table-wrap">
+        <table><thead><tr><th>Destination</th><th>Sessions</th><th>Class</th><th>Bytes</th></tr></thead><tbody>
+          {payload.top_destinations.map((item) => <tr key={item.endpoint}><td className="mono">{item.endpoint}</td><td>{item.sessions}</td><td>{item.classification}</td><td>{number(item.bytes_total)}</td></tr>)}
+        </tbody></table>
+      </div>
+    </div>
+  );
+}
 function PackagesPage({ packagesList }) {
   const [selectedId, setSelectedId] = useState(packagesList[0]?.id);
   const selected = packagesList.find((item) => item.id === selectedId) ?? packagesList[0];
@@ -730,7 +1070,7 @@ function AuditPage({ auditLogs }) {
   );
 }
 
-function SettingsPage({ ranges, stats, apiLive }) {
+function SettingsPage({ ranges, stats, apiLive, importSpecs = [], createImportSpec }) {
   const [tab, setTab] = useState("ranges");
   return (
     <motion.section {...pageMotion} className="page-grid">
@@ -740,6 +1080,7 @@ function SettingsPage({ ranges, stats, apiLive }) {
           {[
             ["ranges", "Platform Ranges"],
             ["adapters", "Operator Adapters"],
+            ["import", "Import Specs"],
             ["system", "System Info"]
           ].map(([id, label]) => (
             <button className={tab === id ? "active" : ""} key={id} onClick={() => setTab(id)} type="button">{label}</button>
@@ -747,6 +1088,7 @@ function SettingsPage({ ranges, stats, apiLive }) {
         </div>
         {tab === "ranges" ? <RangesTable ranges={ranges} /> : null}
         {tab === "adapters" ? <AdaptersPanel /> : null}
+        {tab === "import" ? <ImportSpecsPanel importSpecs={importSpecs} createImportSpec={createImportSpec} /> : null}
         {tab === "system" ? <SystemPanel stats={stats} apiLive={apiLive} /> : null}
       </section>
     </motion.section>
@@ -1394,6 +1736,71 @@ function RangesTable({ ranges }) {
   );
 }
 
+function ImportSpecsPanel({ importSpecs, createImportSpec }) {
+  const defaultMapping = [
+    "msisdn=MSISDN",
+    "source_ip=Source IP Address",
+    "source_port=Source Port",
+    "translated_ip=Translated IP Address",
+    "translated_port=Translated Port",
+    "destination_ip=Destination IP Address",
+    "destination_port=Destination Port",
+    "started_at=Start Date Time",
+    "imei=IMEI",
+    "domain=Domain",
+    "cell_id=Cell ID"
+  ].join("\n");
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [delimiter, setDelimiter] = useState("");
+  const [mappingText, setMappingText] = useState(defaultMapping);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    const mapping = Object.fromEntries(
+      mappingText
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const [canonical, ...sourceParts] = line.split("=");
+          return [canonical.trim(), sourceParts.join("=").trim()];
+        })
+        .filter(([canonical, source]) => canonical && source)
+    );
+    const created = await createImportSpec({ name, description, delimiter: delimiter || null, mapping });
+    if (created) {
+      setName("");
+      setDescription("");
+      setDelimiter("");
+      setMappingText(defaultMapping);
+    }
+  };
+
+  return (
+    <div className="settings-split">
+      <form className="stack" onSubmit={submit}>
+        <div className="form-grid compact">
+          <label className="field"><span>Name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Operator / format name" /></label>
+          <label className="field"><span>Delimiter</span><input value={delimiter} onChange={(event) => setDelimiter(event.target.value)} placeholder="Auto, comma, tab, pipe" /></label>
+        </div>
+        <label className="field"><span>Description</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="When investigators should use this spec" /></label>
+        <label className="field"><span>Column mapping</span><textarea value={mappingText} onChange={(event) => setMappingText(event.target.value)} rows={12} /></label>
+        <Button icon={FileText} disabled={!name.trim()}>Save import spec</Button>
+      </form>
+      <div className="spec-list">
+        {importSpecs.length ? importSpecs.map((spec) => (
+          <article className="spec-card" key={spec.id}>
+            <div><strong>{spec.name}</strong><span className="mono">{spec.id}</span></div>
+            <p>{spec.description || "Custom operator mapping"}</p>
+            <Badge tone="brand">{Object.keys(spec.mapping ?? {}).length} fields</Badge>
+          </article>
+        )) : <EmptyState label="No import specs configured" />}
+      </div>
+    </div>
+  );
+}
+
 function AdaptersPanel() {
   return (
     <div className="adapter-grid">
@@ -1558,6 +1965,12 @@ function toneForClass(classification) {
   return "warning";
 }
 
+function splitList(value) {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
 function number(value) {
   return new Intl.NumberFormat("en-IN").format(value ?? 0);
 }

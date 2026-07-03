@@ -54,6 +54,19 @@ def test_upload_extract_and_quarantine_api_flow(tmp_path: Path, monkeypatch) -> 
     assert packages.status_code == 200
     assert packages.json()
 
+    assert client.get("/api/cases").status_code == 200
+    assert client.get("/api/import-specs").status_code == 200
+    assert client.get("/api/analytics/timeline", params={"bucket": "second"}).status_code == 200
+    assert client.get("/api/analytics/applications").status_code == 200
+    assert client.get("/api/reports/poi/919876543210").status_code == 200
+    assert client.get("/api/reports/ip/49.36.128.45").status_code == 200
+    assert client.get("/api/reports/common-applications").status_code == 200
+    assert client.get("/api/reports/imei-frequency").status_code == 200
+    assert client.get("/api/reports/location-summary").status_code == 200
+    csv_response = client.get("/api/reports/sessions.csv")
+    assert csv_response.status_code == 200
+    assert "case_id" in csv_response.text
+
 
 def test_api_rejects_empty_upload_with_clear_error(tmp_path: Path, monkeypatch) -> None:
     import app.api.router as router

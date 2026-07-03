@@ -30,6 +30,8 @@ class UploadFormatReport(BaseModel):
 class UploadStatus(BaseModel):
     id: str
     filename: str
+    case_id: str = "CASE-GENERAL"
+    import_spec_id: str | None = None
     status: Literal["queued", "processing", "completed", "failed"]
     rows_total: int
     rows_valid: int
@@ -45,6 +47,7 @@ class UploadStatus(BaseModel):
 class SessionRecord(BaseModel):
     id: str
     upload_id: str
+    case_id: str = "CASE-GENERAL"
     a_party_msisdn: str
     subscriber_name: str | None = None
     subscriber_address: str | None = None
@@ -59,6 +62,14 @@ class SessionRecord(BaseModel):
     translated_port: int | None = None
     destination_ip: str
     destination_port: int
+    domain: str | None = None
+    cell_id: str | None = None
+    tower_name: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     ip_allocation: str | None = None
     protocol: str
     started_at: datetime
@@ -139,6 +150,7 @@ class SuspiciousPattern(BaseModel):
 
 
 class DashboardStats(BaseModel):
+    cases: int = 0
     uploads: int
     sessions: int
     actionable: int
@@ -147,6 +159,7 @@ class DashboardStats(BaseModel):
     quarantined_rows: int
     avg_confidence: float
     latest_upload: UploadStatus | None = None
+    top_crime_types: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ExtractionRequest(BaseModel):
@@ -218,3 +231,109 @@ class SearchResult(BaseModel):
     title: str
     subtitle: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+class CaseCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    crime_type: str = Field(default="Unspecified", max_length=80)
+    io_name: str = Field(default="Unassigned", max_length=100)
+    description: str = ""
+    targets: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+
+
+class CaseRecord(CaseCreate):
+    id: str
+    status: Literal["active", "review", "closed"] = "active"
+    created_at: datetime
+    updated_at: datetime
+
+
+class ImportSpecCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    description: str = ""
+    mapping: dict[str, str] = Field(default_factory=dict)
+    delimiter: str | None = None
+
+
+class ImportSpecification(ImportSpecCreate):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class TimelinePoint(BaseModel):
+    bucket: str
+    label: str
+    sessions: int
+    p2p: int
+    relay: int
+    unknown: int
+    bytes_total: int
+
+
+class ApplicationSummary(BaseModel):
+    name: str
+    operator: str
+    sessions: int
+    msisdns: int
+    destination_ips: int
+    duration_seconds: int
+    bytes_total: int
+
+
+class CommonApplicationReport(BaseModel):
+    name: str
+    sessions: int
+    poi_msisdns: list[str] = Field(default_factory=list)
+    destination_ips: list[str] = Field(default_factory=list)
+    total_duration_seconds: int
+    total_bytes: int
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
+
+
+class ImeiFrequencyReport(BaseModel):
+    imei: str
+    sessions: int
+    msisdns: list[str] = Field(default_factory=list)
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
+    handset_hint: str | None = None
+
+
+class LocationSummaryReport(BaseModel):
+    key: str
+    label: str
+    sessions: int
+    day_sessions: int
+    night_sessions: int
+    msisdns: list[str] = Field(default_factory=list)
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+
+
+class PoiSummaryReport(BaseModel):
+    msisdn: str
+    total_sessions: int
+    p2p: int
+    relay: int
+    unknown: int
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
+    total_bytes: int
+    imeis: list[str] = Field(default_factory=list)
+    applications: list[dict[str, Any]] = Field(default_factory=list)
+    top_destinations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class IpSummaryReport(BaseModel):
+    destination_ip: str
+    total_sessions: int
+    msisdns: list[str] = Field(default_factory=list)
+    ports: list[int] = Field(default_factory=list)
+    operator: str
+    classification: Classification
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
+    total_bytes: int
