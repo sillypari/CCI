@@ -674,6 +674,7 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
 
   const submitUpload = async (event) => {
     event.preventDefault();
+    const form = event.currentTarget;
     if (activeFile) {
       setUploading(true);
       setProgress({ percent: 0, speed: 0, loaded: 0, total: activeFile.size, phase: "uploading" });
@@ -686,7 +687,7 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
       setProgress({ percent: 0, speed: 0, loaded: 0, total: 0, phase: "" });
       if (uploaded) {
         setFile(null);
-        event.currentTarget.reset();
+        form?.reset();
       }
     }
   };
@@ -2170,17 +2171,18 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract }) {
     }
     if (!dragRef.current) return;
     const point = toGraphPoint(event);
-    if (dragRef.current.type === "node") {
+    const drag = dragRef.current;
+    if (drag.type === "node") {
       setManualPositions((current) => ({
         ...current,
-        [dragRef.current.nodeId]: { x: point.x - dragRef.current.offsetX, y: point.y - dragRef.current.offsetY }
+        [drag.nodeId]: { x: point.x - drag.offsetX, y: point.y - drag.offsetY }
       }));
       return;
     }
-    if (dragRef.current.type === "pan") {
+    if (drag.type === "pan") {
       setPan({
-        x: dragRef.current.startPan.x + point.rawX - dragRef.current.startX,
-        y: dragRef.current.startPan.y + point.rawY - dragRef.current.startY
+        x: drag.startPan.x + point.rawX - drag.startX,
+        y: drag.startPan.y + point.rawY - drag.startY
       });
     }
   };
@@ -2746,10 +2748,10 @@ function StatCard({ icon: Icon, label, value, tone = "neutral" }) {
 
 
 
-function Button({ children, icon: Icon, variant = "primary", ...props }) {
+function Button({ children, icon: Icon, iconClassName = "", variant = "primary", ...props }) {
   return (
     <button className={`button ${variant}`} type={props.type ?? "submit"} {...props}>
-      {Icon ? <Icon size={16} /> : null}
+      {Icon ? <Icon size={16} className={iconClassName} /> : null}
       <span>{children}</span>
     </button>
   );
