@@ -35,6 +35,8 @@ export const api = {
   dashboard: () => request("/dashboard/stats"),
   uploads: () => request("/uploads"),
   sessions: (query = "") => request(`/sessions${query}`),
+  graph: (query = "") => request(`/graph${query}`),
+  patterns: () => request("/analytics/patterns"),
   extractions: () => request("/extractions"),
   packages: () => request("/packages"),
   auditLogs: () => request("/audit-logs"),

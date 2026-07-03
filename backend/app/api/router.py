@@ -3,6 +3,7 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from app.config import get_settings
 from app.schemas.core import (
     AuditLogEntry,
+    CommunicationGraph,
     DashboardStats,
     ExtractionRequest,
     ExtractionResult,
@@ -11,6 +12,7 @@ from app.schemas.core import (
     RequestPackage,
     SearchResult,
     SessionRecord,
+    SuspiciousPattern,
     UploadStatus,
 )
 from app.services.evidence_store import EvidenceStoreError, UploadValidationError, store
@@ -105,6 +107,20 @@ async def get_extraction(extraction_id: str) -> ExtractionResult:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Extraction not found")
     return extraction
 
+
+
+@api_router.get("/graph", response_model=CommunicationGraph, tags=["graph"])
+async def communication_graph(
+    msisdn: str | None = None,
+    classification: str | None = Query(default=None, pattern="^(p2p|relay|unknown)$"),
+    limit: int = Query(default=5_000, ge=1, le=20_000),
+) -> CommunicationGraph:
+    return store.communication_graph(msisdn=msisdn, classification=classification, limit=limit)
+
+
+@api_router.get("/analytics/patterns", response_model=list[SuspiciousPattern], tags=["analytics"])
+async def suspicious_patterns(limit: int = Query(default=50, ge=1, le=100)) -> list[SuspiciousPattern]:
+    return store.suspicious_patterns(limit=limit)
 
 @api_router.get("/packages", response_model=list[RequestPackage], tags=["packages"])
 async def list_packages() -> list[RequestPackage]:

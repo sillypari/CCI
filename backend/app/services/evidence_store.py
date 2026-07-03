@@ -6,6 +6,7 @@ import ipaddress
 import json
 import re
 import uuid
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
@@ -14,15 +15,20 @@ from typing import Any
 from app.config import get_settings
 from app.schemas.core import (
     AuditLogEntry,
+    CommunicationGraph,
     DashboardStats,
     ExtractionCandidate,
     ExtractionRequest,
     ExtractionResult,
+    GraphEdge,
+    GraphMetrics,
+    GraphNode,
     PlatformRange,
     QuarantineRecord,
     RequestPackage,
     SearchResult,
     SessionRecord,
+    SuspiciousPattern,
     UploadStatus,
 )
 from app.services.classifier import PLATFORM_RELAYS, classify_ip
@@ -545,6 +551,231 @@ class EvidenceStore:
             self._audit_unlocked("platform_range_added", "platform_range", range_item.id, {"cidr": range_item.cidr})
             self._save()
         return range_item
+
+    def communication_graph(
+        self,
+        msisdn: str | None = None,
+        classification: str | None = None,
+        limit: int = 5_000,
+    ) -> CommunicationGraph:
+        normalized_classification = None if classification in (None, "all") else classification
+        sessions = self.list_sessions(msisdn=msisdn, classification=normalized_classification, limit=limit)
+        nodes: dict[str, dict[str, Any]] = {}
+        links: dict[str, dict[str, Any]] = {}
+
+        def add_node(node_id: str, kind: str, label: str, title: str, operator: str, session: SessionRecord) -> None:
+            total_bytes = session.bytes_up + session.bytes_down
+            existing = nodes.get(node_id)
+            if existing is None:
+                nodes[node_id] = {
+                    "id": node_id,
+                    "label": label,
+                    "title": title,
+                    "kind": kind,
+                    "operator": operator,
+                    "count": 1,
+                    "bytes": total_bytes,
+                    "confidence": session.confidence,
+                    "last_seen": session.started_at,
+                    "sessions": [session],
+                }
+                return
+            existing["count"] += 1
+            existing["bytes"] += total_bytes
+            existing["confidence"] = max(existing["confidence"], session.confidence)
+            existing["last_seen"] = max(existing["last_seen"], session.started_at)
+            existing["sessions"].append(session)
+            if existing["kind"] != "source":
+                existing["kind"] = self._merge_classification(existing["kind"], kind)
+            if existing["operator"] != operator:
+                existing["operator"] = "Multiple"
+
+        for session in sessions:
+            add_node(
+                session.a_party_msisdn,
+                "source",
+                session.a_party_msisdn[-4:],
+                session.a_party_msisdn,
+                session.operator,
+                session,
+            )
+            add_node(
+                session.destination_ip,
+                session.classification,
+                self._short_ip(session.destination_ip),
+                session.destination_ip,
+                session.operator,
+                session,
+            )
+
+            link_id = f"{session.a_party_msisdn}__{session.destination_ip}"
+            total_bytes = session.bytes_up + session.bytes_down
+            existing_link = links.get(link_id)
+            if existing_link is None:
+                links[link_id] = {
+                    "id": link_id,
+                    "source_id": session.a_party_msisdn,
+                    "target_id": session.destination_ip,
+                    "classification": session.classification,
+                    "count": 1,
+                    "bytes": total_bytes,
+                    "duration_seconds": session.duration_seconds,
+                    "confidence": session.confidence,
+                    "sessions": [session],
+                }
+                continue
+            existing_link["count"] += 1
+            existing_link["bytes"] += total_bytes
+            existing_link["duration_seconds"] += session.duration_seconds
+            existing_link["confidence"] = max(existing_link["confidence"], session.confidence)
+            existing_link["classification"] = self._merge_classification(existing_link["classification"], session.classification)
+            existing_link["sessions"].append(session)
+
+        node_models = [GraphNode.model_validate(item) for item in nodes.values()]
+        link_models = [GraphEdge.model_validate(item) for item in links.values()]
+        seen_times = [session.started_at for session in sessions]
+        metrics = GraphMetrics(
+            nodes=len(node_models),
+            edges=len(link_models),
+            sessions=len(sessions),
+            p2p=sum(1 for session in sessions if session.classification == "p2p"),
+            relay=sum(1 for session in sessions if session.classification == "relay"),
+            unknown=sum(1 for session in sessions if session.classification == "unknown"),
+            high_confidence=sum(1 for session in sessions if session.confidence >= 0.85),
+            first_seen=min(seen_times) if seen_times else None,
+            last_seen=max(seen_times) if seen_times else None,
+        )
+        return CommunicationGraph(nodes=node_models, links=link_models, sessions=sessions, metrics=metrics)
+
+    def suspicious_patterns(self, limit: int = 50) -> list[SuspiciousPattern]:
+        with self._lock:
+            sessions = list(self.sessions)
+            uploads = list(self.uploads)
+
+        patterns: list[SuspiciousPattern] = []
+        by_endpoint: dict[str, list[SessionRecord]] = defaultdict(list)
+        by_msisdn: dict[str, list[SessionRecord]] = defaultdict(list)
+        by_pair: dict[tuple[str, str, int], list[SessionRecord]] = defaultdict(list)
+
+        for session in sessions:
+            endpoint = f"{session.destination_ip}:{session.destination_port}"
+            by_endpoint[endpoint].append(session)
+            by_msisdn[session.a_party_msisdn].append(session)
+            by_pair[(session.a_party_msisdn, session.destination_ip, session.destination_port)].append(session)
+
+        for endpoint, items in by_endpoint.items():
+            p2p_items = [item for item in items if item.classification == "p2p"]
+            msisdns = sorted({item.a_party_msisdn for item in p2p_items})
+            if len(msisdns) < 2:
+                continue
+            score = min(0.99, 0.62 + len(msisdns) * 0.08 + len(p2p_items) * 0.02)
+            severity = "high" if len(msisdns) >= 3 or len(p2p_items) >= 5 else "medium"
+            patterns.append(
+                SuspiciousPattern(
+                    id=self._pattern_id("shared_endpoint", endpoint),
+                    severity=severity,
+                    pattern_type="shared_endpoint",
+                    title="Shared B-party endpoint across A-parties",
+                    description="Multiple A-party MSISDNs connected to the same high-confidence public endpoint.",
+                    entities={"endpoint": endpoint, "msisdns": msisdns},
+                    evidence=[f"{item.a_party_msisdn} -> {endpoint} at {item.started_at.isoformat()}" for item in p2p_items[:5]],
+                    recommended_action="Review the endpoint in the graph, compare timestamps, and prepare operator request packages for matching high-confidence sessions.",
+                    score=round(score, 2),
+                )
+            )
+
+        for (msisdn, destination_ip, destination_port), items in by_pair.items():
+            p2p_items = [item for item in items if item.classification == "p2p"]
+            if len(p2p_items) < 2:
+                continue
+            endpoint = f"{destination_ip}:{destination_port}"
+            patterns.append(
+                SuspiciousPattern(
+                    id=self._pattern_id("repeat_contact", f"{msisdn}:{endpoint}"),
+                    severity="medium",
+                    pattern_type="repeat_contact",
+                    title="Repeated direct B-party contact",
+                    description="The same A-party repeatedly contacted one actionable public endpoint.",
+                    entities={"msisdn": msisdn, "endpoint": endpoint},
+                    evidence=[f"{item.source_file} row {item.row_number} at {item.started_at.isoformat()}" for item in p2p_items[:5]],
+                    recommended_action="Use the edge inspector to validate all supporting rows, then run extraction for this A-party if not already done.",
+                    score=round(min(0.95, 0.6 + len(p2p_items) * 0.08), 2),
+                )
+            )
+
+        for msisdn, items in by_msisdn.items():
+            if len(items) >= 3:
+                relay_count = sum(1 for item in items if item.classification == "relay")
+                relay_ratio = relay_count / len(items)
+                if relay_ratio >= 0.6:
+                    patterns.append(
+                        SuspiciousPattern(
+                            id=self._pattern_id("relay_heavy", msisdn),
+                            severity="medium" if relay_ratio < 0.8 else "high",
+                            pattern_type="relay_heavy",
+                            title="Relay-heavy communication pattern",
+                            description="Most sessions for this A-party resolve to platform relay or noise infrastructure.",
+                            entities={"msisdn": msisdn, "relay_ratio": round(relay_ratio, 2)},
+                            evidence=[f"{item.destination_ip}:{item.destination_port} {item.classification}" for item in items[:5]],
+                            recommended_action="Filter the graph to relay/noise, then isolate remaining P2P or unknown flows for manual review.",
+                            score=round(min(0.95, 0.5 + relay_ratio * 0.45), 2),
+                        )
+                    )
+
+            ordered = sorted(items, key=lambda item: item.started_at)
+            for index, first in enumerate(ordered):
+                window = [item for item in ordered[index:] if item.started_at - first.started_at <= timedelta(minutes=10)]
+                if len(window) >= 3:
+                    patterns.append(
+                        SuspiciousPattern(
+                            id=self._pattern_id("burst_activity", f"{msisdn}:{first.started_at.isoformat()}"),
+                            severity="high" if len(window) >= 5 else "medium",
+                            pattern_type="burst_activity",
+                            title="Short-window burst activity",
+                            description="Multiple sessions for one A-party occurred inside a ten-minute window.",
+                            entities={"msisdn": msisdn, "window_start": first.started_at.isoformat(), "session_count": len(window)},
+                            evidence=[f"{item.destination_ip}:{item.destination_port} at {item.started_at.isoformat()}" for item in window[:5]],
+                            recommended_action="Open the communication map for this MSISDN and inspect whether the burst contains direct endpoints or only relay traffic.",
+                            score=round(min(0.98, 0.58 + len(window) * 0.07), 2),
+                        )
+                    )
+                    break
+
+        for upload in uploads:
+            if upload.rows_quarantined <= 0:
+                continue
+            ratio = upload.rows_quarantined / max(upload.rows_total, 1)
+            patterns.append(
+                SuspiciousPattern(
+                    id=self._pattern_id("quarantine_rows", upload.id),
+                    severity="high" if ratio >= 0.5 else "low",
+                    pattern_type="quarantine_rows",
+                    title="Evidence rows require quarantine review",
+                    description="One uploaded evidence file contains rows that were excluded from normalized investigation data.",
+                    entities={"upload_id": upload.id, "filename": upload.filename, "quarantined_rows": upload.rows_quarantined},
+                    evidence=[f"Row {item.row_number}: {item.reason}" for item in upload.quarantine_errors[:5]],
+                    recommended_action="Review quarantine reasons before relying on completeness of extraction or graph conclusions.",
+                    score=round(min(0.9, 0.35 + ratio), 2),
+                )
+            )
+
+        severity_rank = {"high": 0, "medium": 1, "low": 2}
+        patterns.sort(key=lambda item: (severity_rank[item.severity], -item.score, item.title))
+        return patterns[: max(1, min(limit, 100))]
+
+    def _pattern_id(self, pattern_type: str, key: str) -> str:
+        return f"SIG-{uuid.uuid5(uuid.NAMESPACE_URL, f'pramaan-ipdr:{pattern_type}:{key}').hex[:8]}"
+
+    def _merge_classification(self, current: str, new_value: str) -> str:
+        if current == "p2p" or new_value == "p2p":
+            return "p2p"
+        if current == "relay" or new_value == "relay":
+            return "relay"
+        return "unknown"
+
+    def _short_ip(self, value: str) -> str:
+        parts = value.split(".")
+        return f"{parts[2]}.{parts[3]}" if len(parts) == 4 else value
 
     def search(self, q: str, limit: int = 20) -> list[SearchResult]:
         needle = q.strip().lower()

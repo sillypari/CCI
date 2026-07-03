@@ -28,6 +28,15 @@ def test_upload_extract_and_quarantine_api_flow(tmp_path: Path, monkeypatch) -> 
     assert sessions.status_code == 200
     assert len(sessions.json()) == 2
 
+    graph = client.get("/api/graph", params={"msisdn": "919876543210"})
+    assert graph.status_code == 200
+    assert graph.json()["metrics"]["sessions"] == 3
+    assert graph.json()["links"]
+
+    patterns = client.get("/api/analytics/patterns")
+    assert patterns.status_code == 200
+    assert any(item["pattern_type"] == "burst_activity" for item in patterns.json())
+
     extraction = client.post("/api/extract", json={"msisdn": "919876543210", "depth": 1, "min_confidence": 0.65})
     assert extraction.status_code == 200
     assert extraction.json()["actionable_count"] == 2

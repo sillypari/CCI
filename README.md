@@ -33,6 +33,8 @@ Implemented capabilities:
 - Known platform relay range detection for services such as WhatsApp, Telegram, and Google ranges included in the classifier.
 - Operator range tagging for selected Indian telecom ranges.
 - Extraction workflow for a supplied A-party MSISDN.
+- Backend graph aggregation endpoint for visualization slices by MSISDN and classification.
+- Suspicious-pattern detection for bursts, repeated direct contacts, shared endpoints, relay-heavy behavior, and quarantine review.
 - Request-package generation for actionable B-party candidates.
 - Audit log surface for important workflow events.
 - React dashboard with dashboard, upload, sessions, extraction, communication map, packages, audit log, and settings pages.
@@ -313,6 +315,8 @@ http://localhost:8000/api
 | `GET` | `/uploads/{upload_id}/status` | Read upload processing status |
 | `GET` | `/sessions` | List normalized sessions with optional filters |
 | `GET` | `/sessions/{session_id}` | Read a single session |
+| `GET` | `/graph` | Return backend-aggregated graph nodes, links, sessions, and metrics |
+| `GET` | `/analytics/patterns` | List suspicious investigation signals detected from uploaded evidence |
 | `POST` | `/extract` | Run B-party extraction for a supplied MSISDN |
 | `GET` | `/extractions` | List extraction results |
 | `GET` | `/extractions/{extraction_id}` | Read a single extraction result |

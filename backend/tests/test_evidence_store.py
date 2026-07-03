@@ -71,3 +71,29 @@ def test_missing_required_columns_are_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(UploadValidationError, match="Missing required column"):
         evidence_store.ingest_upload("bad.csv", b"phone,ip,port\n1,2,3\n")
+
+def test_communication_graph_is_aggregated_for_filtered_msisdn(tmp_path: Path) -> None:
+    evidence_store = EvidenceStore(tmp_path)
+    evidence_store.ingest_upload("valid_ipdr.csv", read_fixture("valid_ipdr.csv"))
+
+    graph = evidence_store.communication_graph(msisdn="919876543210")
+
+    assert graph.metrics.sessions == 3
+    assert graph.metrics.nodes == 4
+    assert graph.metrics.edges == 3
+    assert graph.metrics.p2p == 2
+    assert graph.metrics.relay == 1
+    assert {node.kind for node in graph.nodes} >= {"source", "p2p", "relay"}
+    assert all(link.sessions for link in graph.links)
+
+
+def test_suspicious_patterns_detect_short_window_burst(tmp_path: Path) -> None:
+    evidence_store = EvidenceStore(tmp_path)
+    evidence_store.ingest_upload("valid_ipdr.csv", read_fixture("valid_ipdr.csv"))
+
+    patterns = evidence_store.suspicious_patterns()
+
+    burst = next(item for item in patterns if item.pattern_type == "burst_activity")
+    assert burst.severity == "medium"
+    assert burst.entities["msisdn"] == "919876543210"
+    assert burst.entities["session_count"] == 3

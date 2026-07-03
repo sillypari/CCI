@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field
 
 
 Classification = Literal["p2p", "relay", "unknown"]
+GraphNodeKind = Literal["source", "p2p", "relay", "unknown"]
+PatternSeverity = Literal["low", "medium", "high"]
 
 
 class QuarantineRecord(BaseModel):
@@ -45,6 +47,62 @@ class SessionRecord(BaseModel):
     confidence: float = Field(ge=0, le=1)
     source_file: str
     row_number: int
+
+
+class GraphNode(BaseModel):
+    id: str
+    label: str
+    title: str
+    kind: GraphNodeKind
+    operator: str
+    count: int
+    bytes: int
+    confidence: float = Field(ge=0, le=1)
+    last_seen: datetime | None = None
+    sessions: list[SessionRecord] = Field(default_factory=list)
+
+
+class GraphEdge(BaseModel):
+    id: str
+    source_id: str
+    target_id: str
+    classification: Classification
+    count: int
+    bytes: int
+    duration_seconds: int
+    confidence: float = Field(ge=0, le=1)
+    sessions: list[SessionRecord] = Field(default_factory=list)
+
+
+class GraphMetrics(BaseModel):
+    nodes: int
+    edges: int
+    sessions: int
+    p2p: int
+    relay: int
+    unknown: int
+    high_confidence: int
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
+
+
+class CommunicationGraph(BaseModel):
+    nodes: list[GraphNode]
+    links: list[GraphEdge]
+    sessions: list[SessionRecord]
+    metrics: GraphMetrics
+
+
+class SuspiciousPattern(BaseModel):
+    id: str
+    severity: PatternSeverity
+    pattern_type: str
+    title: str
+    description: str
+    entities: dict[str, Any]
+    evidence: list[str]
+    recommended_action: str
+    score: float = Field(ge=0, le=1)
 
 
 class DashboardStats(BaseModel):

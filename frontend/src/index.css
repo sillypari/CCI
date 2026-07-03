@@ -2982,3 +2982,74 @@ tbody tr:hover {
   cursor: not-allowed;
   opacity: 0.58;
 }
+
+/* Investigation signals */
+.signal-list {
+  display: grid;
+  gap: 10px;
+}
+
+.signal-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  overflow: hidden;
+}
+
+.signal-row::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--color-border);
+}
+
+.signal-row.high::before {
+  background: var(--color-danger);
+}
+
+.signal-row.medium::before {
+  background: var(--color-warning);
+}
+
+.signal-row.low::before {
+  background: var(--color-brand);
+}
+
+.signal-row strong,
+.signal-row p {
+  display: block;
+  min-width: 0;
+}
+
+.signal-row strong {
+  margin-top: 3px;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.signal-row p {
+  margin: 5px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.graph-alert {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-subtle);
+  color: var(--color-text-primary);
+  font-size: 13px;
+}

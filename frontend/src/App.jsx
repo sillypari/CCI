@@ -65,10 +65,29 @@ const emptyStats = {
   latest_upload: null
 };
 
+const emptyGraphData = {
+  nodes: [],
+  links: [],
+  sessions: [],
+  metrics: {
+    nodes: 0,
+    edges: 0,
+    sessions: 0,
+    p2p: 0,
+    relay: 0,
+    unknown: 0,
+    high_confidence: 0,
+    first_seen: null,
+    last_seen: null
+  }
+};
+
 const initialState = {
   stats: emptyStats,
   uploads: [],
   sessions: [],
+  graph: emptyGraphData,
+  patterns: [],
   extractions: [],
   packages: [],
   auditLogs: [],
@@ -91,16 +110,18 @@ function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const [stats, uploads, sessions, extractions, packagesList, auditLogs, platformRanges] = await Promise.all([
+      const [stats, uploads, sessions, graph, patterns, extractions, packagesList, auditLogs, platformRanges] = await Promise.all([
         api.dashboard(),
         api.uploads(),
         api.sessions(),
+        api.graph(),
+        api.patterns(),
         api.extractions(),
         api.packages(),
         api.auditLogs(),
         api.platformRanges()
       ]);
-      setData({ stats, uploads, sessions, extractions, packages: packagesList, auditLogs, platformRanges });
+      setData({ stats, uploads, sessions, graph: normalizeGraphResponse(graph), patterns, extractions, packages: packagesList, auditLogs, platformRanges });
       setApiLive(true);
       setApiError("");
     } catch (error) {
@@ -163,7 +184,7 @@ function App() {
             <Route path="/uploads" element={<UploadsPage uploads={data.uploads} uploadFile={uploadFile} />} />
             <Route path="/sessions" element={<SessionsPage sessions={data.sessions} />} />
             <Route path="/extractions" element={<ExtractionsPage extractions={data.extractions} runExtraction={runExtraction} />} />
-            <Route path="/map" element={<MapPage sessions={data.sessions} runExtraction={runExtraction} />} />
+            <Route path="/map" element={<MapPage initialGraph={data.graph} runExtraction={runExtraction} />} />
             <Route path="/packages" element={<PackagesPage packagesList={data.packages} />} />
             <Route path="/audit" element={<AuditPage auditLogs={data.auditLogs} />} />
             <Route path="/settings" element={<SettingsPage ranges={data.platformRanges} stats={data.stats} apiLive={apiLive} />} />
@@ -261,6 +282,7 @@ function Shell({ apiLive, apiError, children }) {
 function DashboardPage({ data }) {
   const recentSessions = data.sessions.slice(0, 5);
   const actionableRate = data.stats.sessions ? Math.round((data.stats.actionable / data.stats.sessions) * 100) : 0;
+  const topPatterns = (data.patterns ?? []).slice(0, 4);
   return (
     <motion.section {...pageMotion} className="page-grid">
       <section className="case-ribbon span-12">
@@ -318,7 +340,12 @@ function DashboardPage({ data }) {
         )}
       </section>
 
-      <section className="panel span-12">
+      <section className="panel span-5">
+        <PanelHeader icon={AlertTriangle} title="Investigation Signals" action={<Badge tone={topPatterns.length ? "warning" : "success"}>{topPatterns.length}</Badge>} />
+        {topPatterns.length ? <SignalList patterns={topPatterns} /> : <EmptyState label="No suspicious signals detected" />}
+      </section>
+
+      <section className="panel span-7">
         <PanelHeader icon={Database} title="Recent Sessions" action={<NavLink to="/sessions" className="text-link">View all</NavLink>} />
         <SessionsTable sessions={recentSessions} compact />
       </section>
@@ -326,6 +353,22 @@ function DashboardPage({ data }) {
   );
 }
 
+function SignalList({ patterns }) {
+  return (
+    <div className="signal-list">
+      {patterns.map((pattern) => (
+        <article className={`signal-row ${pattern.severity}`} key={pattern.id}>
+          <div>
+            <span className="eyebrow">{pattern.pattern_type.replaceAll("_", " ")}</span>
+            <strong>{pattern.title}</strong>
+            <p>{pattern.recommended_action}</p>
+          </div>
+          <Badge tone={pattern.severity === "high" ? "danger" : pattern.severity === "medium" ? "warning" : "neutral"}>{Math.round(pattern.score * 100)}%</Badge>
+        </article>
+      ))}
+    </div>
+  );
+}
 function UploadsPage({ uploads, uploadFile }) {
   const [activeFile, setActiveFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -506,10 +549,45 @@ function ExtractionsPage({ extractions, runExtraction }) {
   );
 }
 
-function MapPage({ sessions, runExtraction }) {
+function MapPage({ initialGraph, runExtraction }) {
   const [msisdn, setMsisdn] = useState("");
   const [classification, setClassification] = useState("all");
   const [selected, setSelected] = useState(null);
+  const [graphData, setGraphData] = useState(() => normalizeGraphResponse(initialGraph));
+  const [graphBusy, setGraphBusy] = useState(false);
+  const [graphError, setGraphError] = useState("");
+  const deferredMsisdn = useDeferredValue(msisdn);
+
+  useEffect(() => {
+    setGraphData(normalizeGraphResponse(initialGraph));
+  }, [initialGraph]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadGraph = async () => {
+      const params = new URLSearchParams();
+      const trimmedMsisdn = deferredMsisdn.trim();
+      if (trimmedMsisdn) params.set("msisdn", trimmedMsisdn);
+      if (classification !== "all") params.set("classification", classification);
+      params.set("limit", "5000");
+      setGraphBusy(true);
+      try {
+        const payload = await api.graph(`?${params.toString()}`);
+        if (!cancelled) {
+          setGraphData(normalizeGraphResponse(payload));
+          setGraphError("");
+        }
+      } catch (error) {
+        if (!cancelled) setGraphError(error.message);
+      } finally {
+        if (!cancelled) setGraphBusy(false);
+      }
+    };
+    loadGraph();
+    return () => {
+      cancelled = true;
+    };
+  }, [classification, deferredMsisdn]);
 
   return (
     <motion.section {...pageMotion} className="page-grid">
@@ -519,6 +597,7 @@ function MapPage({ sessions, runExtraction }) {
           title="Communication Map"
           action={
             <div className="map-actions">
+              <Badge tone={graphBusy ? "warning" : "brand"}>{graphBusy ? "Syncing" : "Backend graph"}</Badge>
               <label className="map-query">
                 <Search size={16} />
                 <input aria-label="A-party MSISDN" value={msisdn} onChange={(event) => setMsisdn(event.target.value)} placeholder="Filter MSISDN" />
@@ -538,10 +617,9 @@ function MapPage({ sessions, runExtraction }) {
             </div>
           }
         />
+        {graphError ? <div className="graph-alert" role="alert"><AlertTriangle size={16} /> <span>{graphError}</span></div> : null}
         <NetworkGraph
-          sessions={sessions}
-          msisdn={msisdn}
-          classification={classification}
+          graphData={graphData}
           selected={selected}
           onSelect={setSelected}
           onExtract={() => (msisdn.trim() ? runExtraction({ msisdn, depth: 1, min_confidence: 0.65 }) : null)}
@@ -735,7 +813,26 @@ function ExtractionResultView({ extraction }) {
   );
 }
 
-function NetworkGraph({ sessions, msisdn, classification, selected, onSelect, onExtract }) {
+function normalizeGraphResponse(payload) {
+  const graph = payload ?? emptyGraphData;
+  return {
+    nodes: (graph.nodes ?? []).map((node) => ({
+      ...node,
+      lastSeen: node.last_seen ?? node.lastSeen ?? null,
+      sessions: node.sessions ?? []
+    })),
+    links: (graph.links ?? []).map((link) => ({
+      ...link,
+      sourceId: link.source_id ?? link.sourceId,
+      targetId: link.target_id ?? link.targetId,
+      duration: link.duration_seconds ?? link.duration ?? 0,
+      sessions: link.sessions ?? []
+    })),
+    sessions: graph.sessions ?? [],
+    metrics: { ...emptyGraphData.metrics, ...(graph.metrics ?? {}) }
+  };
+}
+function NetworkGraph({ graphData, selected, onSelect, onExtract }) {
   const VIEW_WIDTH = 1120;
   const VIEW_HEIGHT = 640;
   const svgRef = useRef(null);
@@ -748,62 +845,9 @@ function NetworkGraph({ sessions, msisdn, classification, selected, onSelect, on
   const [manualPositions, setManualPositions] = useState({});
 
   const graph = useMemo(() => {
-    const query = msisdn.trim();
-    const related = sessions.filter((session) => {
-      const matchesSubject = !query || session.a_party_msisdn.includes(query);
-      const matchesClass = classification === "all" || session.classification === classification;
-      return matchesSubject && matchesClass;
-    });
-
-    const nodesById = new Map();
-    const linksById = new Map();
-
-    related.forEach((session) => {
-      upsertGraphNode(nodesById, {
-        id: session.a_party_msisdn,
-        label: session.a_party_msisdn.slice(-4),
-        title: session.a_party_msisdn,
-        kind: "source",
-        operator: session.operator,
-        session
-      });
-
-      upsertGraphNode(nodesById, {
-        id: session.destination_ip,
-        label: shortIp(session.destination_ip),
-        title: session.destination_ip,
-        kind: session.classification,
-        operator: session.operator,
-        session
-      });
-
-      const linkId = `${session.a_party_msisdn}__${session.destination_ip}`;
-      const existing = linksById.get(linkId);
-      if (existing) {
-        existing.sessions.push(session);
-        existing.count += 1;
-        existing.bytes += session.bytes_up + session.bytes_down;
-        existing.duration += session.duration_seconds;
-        existing.confidence = Math.max(existing.confidence, session.confidence);
-        if (session.classification === "p2p") existing.classification = "p2p";
-        if (existing.classification !== "p2p" && session.classification === "relay") existing.classification = "relay";
-      } else {
-        linksById.set(linkId, {
-          id: linkId,
-          sourceId: session.a_party_msisdn,
-          targetId: session.destination_ip,
-          classification: session.classification,
-          count: 1,
-          bytes: session.bytes_up + session.bytes_down,
-          duration: session.duration_seconds,
-          confidence: session.confidence,
-          sessions: [session]
-        });
-      }
-    });
-
-    const nodes = Array.from(nodesById.values());
-    const links = Array.from(linksById.values());
+    const sourceGraph = graphData ?? emptyGraphData;
+    const nodes = sourceGraph.nodes ?? [];
+    const links = sourceGraph.links ?? [];
     const simulationNodes = nodes.map((node, index) => ({ ...node, x: 180 + index * 42, y: 160 + index * 22 }));
     const simulationLinks = links.map((link) => ({ ...link, source: link.sourceId, target: link.targetId }));
 
@@ -825,27 +869,29 @@ function NetworkGraph({ sessions, msisdn, classification, selected, onSelect, on
 
     const positions = new Map(simulationNodes.map((node) => [node.id, { x: node.x, y: node.y }]));
     const positionedNodes = nodes.map((node) => ({ ...node, ...positions.get(node.id) }));
+    const metrics = sourceGraph.metrics ?? emptyGraphData.metrics;
 
     return {
       nodes: positionedNodes,
       links,
-      sessions: related,
+      sessions: sourceGraph.sessions ?? [],
       metrics: {
-        nodes: positionedNodes.length,
-        edges: links.length,
-        sessions: related.length,
-        p2p: related.filter((session) => session.classification === "p2p").length,
-        relay: related.filter((session) => session.classification === "relay").length
+        nodes: metrics.nodes ?? positionedNodes.length,
+        edges: metrics.edges ?? links.length,
+        sessions: metrics.sessions ?? sourceGraph.sessions?.length ?? 0,
+        p2p: metrics.p2p ?? 0,
+        relay: metrics.relay ?? 0,
+        unknown: metrics.unknown ?? 0,
+        high_confidence: metrics.high_confidence ?? 0
       }
     };
-  }, [classification, msisdn, sessions]);
-
+  }, [graphData]);
   useEffect(() => {
     setManualPositions({});
     setPan({ x: 0, y: 0 });
     setZoom(1);
     onSelect(null);
-  }, [classification, msisdn, onSelect]);
+  }, [graphData, onSelect]);
 
   const positions = useMemo(() => {
     const map = new Map();
