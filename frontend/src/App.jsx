@@ -1718,9 +1718,9 @@ function PackagesPage({ packagesList }) {
 
   return (
     <motion.section {...pageMotion} className="page-grid">
-      <section className="panel span-5">
+      <section className="panel span-5" style={{ display: "flex", flexDirection: "column", height: "fit-content" }}>
         <PanelHeader icon={FileText} title="Packages" action={<Badge tone="brand">{packagesList.length}</Badge>} />
-        <div className="package-list">
+        <div className="package-list" style={{ maxHeight: "calc(100vh - 240px)", overflowY: "auto", paddingRight: "4px" }}>
           {packagesList.length ? packagesList.map((item) => (
             <button className={`package-row ${item.id === selected?.id ? "active" : ""}`} key={item.id} onClick={() => setSelectedId(item.id)} type="button">
               <span>{item.id}</span>
@@ -1730,7 +1730,7 @@ function PackagesPage({ packagesList }) {
           )) : <EmptyState label="No request packages generated" />}
         </div>
       </section>
-      <section className="panel span-7">
+      <section className="panel span-7" style={{ display: "flex", flexDirection: "column", height: "fit-content" }}>
         <PanelHeader
           icon={ShieldCheck}
           title="Request Package"
@@ -1741,7 +1741,9 @@ function PackagesPage({ packagesList }) {
             </div>
           }
         />
-        {selected ? <RequestPackageCard item={selected} /> : <EmptyState label="No package selected" />}
+        <div style={{ maxHeight: "calc(100vh - 240px)", overflowY: "auto", paddingRight: "4px" }}>
+          {selected ? <RequestPackageCard item={selected} /> : <EmptyState label="No package selected" />}
+        </div>
       </section>
     </motion.section>
   );
