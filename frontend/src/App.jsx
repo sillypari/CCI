@@ -543,7 +543,7 @@ function CasesPage({ cases, stats, createCase, deleteCase }) {
       <section className="panel span-7">
         <PanelHeader icon={Database} title="Case List" action={<Badge tone="brand">{cases.length}</Badge>} />
         <div className="table-wrap">
-          <table>
+          <table style={{ minWidth: "100%" }}>
             <thead><tr><th>Case</th><th>Crime</th><th>IO</th><th>Targets</th><th>Status</th><th>Action</th></tr></thead>
             <tbody>
               {cases.length ? cases.map((item) => (
