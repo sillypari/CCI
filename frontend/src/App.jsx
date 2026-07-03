@@ -1267,9 +1267,19 @@ function ExtractionsPage({ extractions, runExtraction }) {
           <Button icon={Play} disabled={busy || !msisdn.trim()}>{busy ? "Running" : "Run extraction"}</Button>
         </form>
       </section>
-      <section className="panel span-8">
+      <section className="panel span-8" style={{ position: "relative" }}>
         <PanelHeader icon={ShieldCheck} title="Latest Result" action={latest ? <Badge tone="success">{latest.actionable_count} actionable</Badge> : null} />
-        {latest ? <ExtractionResultView extraction={latest} /> : <EmptyState label="No extraction has been run" />}
+        {busy ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '350px', gap: '16px' }}>
+            <Loader2 size={32} className="animate-spin" style={{ color: 'var(--color-brand)' }} />
+            <div style={{ fontSize: '14px', fontWeight: '500' }}>Running B-Party extraction and network mapping...</div>
+            <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>This may take a moment for large datasets.</div>
+          </div>
+        ) : latest ? (
+          <ExtractionResultView extraction={latest} />
+        ) : (
+          <EmptyState label="No extraction has been run" />
+        )}
       </section>
     </motion.section>
   );
@@ -1355,12 +1365,35 @@ function MapPage({ initialGraph, runExtraction }) {
           }
         />
         {graphError ? <div className="graph-alert" role="alert"><AlertTriangle size={16} /> <span>{graphError}</span></div> : null}
-        <NetworkGraph
-          graphData={graphData}
-          selected={selected}
-          onSelect={setSelected}
-          onExtract={() => (msisdn.trim() ? runExtraction({ msisdn, depth: 1, min_confidence: 0.65 }) : null)}
-        />
+        <div style={{ position: "relative" }}>
+          {graphBusy && (
+            <div style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              height: "100%",
+              background: "rgba(0,0,0,0.4)",
+              backdropFilter: "blur(2px)",
+              zIndex: 10,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "12px",
+              borderRadius: "8px"
+            }}>
+              <Loader2 size={32} className="animate-spin" style={{ color: "var(--color-brand)" }} />
+              <strong style={{ fontSize: "14px", color: "#fff" }}>Rendering network communication graph...</strong>
+            </div>
+          )}
+          <NetworkGraph
+            graphData={graphData}
+            selected={selected}
+            onSelect={setSelected}
+            onExtract={() => (msisdn.trim() ? runExtraction({ msisdn, depth: 1, min_confidence: 0.65 }) : null)}
+          />
+        </div>
       </section>
     </motion.section>
   );
@@ -1369,15 +1402,19 @@ function MapPage({ initialGraph, runExtraction }) {
 function AnalyticsPage({ timeline, applications, patterns }) {
   const [bucket, setBucket] = useState("hour");
   const [points, setPoints] = useState(timeline);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     const loadTimeline = async () => {
+      setBusy(true);
       try {
         const payload = await api.timeline(`?bucket=${bucket}`);
         if (!cancelled) setPoints(payload);
       } catch {
         if (!cancelled) setPoints(timeline);
+      } finally {
+        if (!cancelled) setBusy(false);
       }
     };
     loadTimeline();
@@ -1409,7 +1446,24 @@ function AnalyticsPage({ timeline, applications, patterns }) {
             />
           }
         />
-        <div className="timeline-chart">
+        <div className="timeline-chart" style={{ position: "relative", minHeight: "200px" }}>
+          {busy && (
+            <div style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              height: "100%",
+              background: "rgba(0,0,0,0.2)",
+              backdropFilter: "blur(1px)",
+              zIndex: 10,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center"
+            }}>
+              <Loader2 className="animate-spin" size={24} style={{ color: "var(--color-brand)" }} />
+            </div>
+          )}
           {points.length ? points.map((item) => (
             <div className="timeline-bar" key={item.bucket}>
               <span className="timeline-bar__label">{item.label}</span>
@@ -1503,13 +1557,23 @@ function ReportsPage({ sessions }) {
         </form>
         <form className="stack divided" onSubmit={runIp}>
           <label className="field"><span>Destination IP</span><input value={ip} onChange={(event) => setIp(event.target.value)} placeholder="B-party IP" /></label>
-          <Button icon={Network} disabled={busy || !ip.trim()} variant="secondary">IP summary</Button>
+          <Button icon={Network} disabled={busy || !ip.trim()} variant="secondary">{busy ? "Building" : "IP summary"}</Button>
         </form>
         <a className="text-link" href={api.sessionCsvUrl()}>Export sessions CSV</a>
       </section>
       <section className="panel span-7">
         <PanelHeader icon={ShieldCheck} title="Report Preview" action={<Badge tone="brand">{sessions.length} rows</Badge>} />
-        {report ? <ReportPreview report={report} /> : <EmptyState label="Build a PoI or IP report" />}
+        {busy ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '220px', gap: '12px' }}>
+            <Loader2 size={28} className="animate-spin" style={{ color: 'var(--color-brand)' }} />
+            <div style={{ fontSize: '13px', fontWeight: '500' }}>Compiling intelligence metrics & geodata...</div>
+            <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>This may take up to a minute for millions of sessions.</div>
+          </div>
+        ) : report ? (
+          <ReportPreview report={report} />
+        ) : (
+          <EmptyState label="Build a PoI or IP report" />
+        )}
       </section>
       <section className="panel span-4">
         <PanelHeader icon={Activity} title="Common Applications" action={<Badge tone="brand">{commonApps.length}</Badge>} />

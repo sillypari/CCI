@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, NavLink } from 'react-router-dom';
 import { api, API_BASE_URL } from '../api/client.js';
-import { ArrowLeft, Server, MapPin, Activity, Download, Globe } from 'lucide-react';
+import { ArrowLeft, Server, MapPin, Activity, Download, Globe, Loader2 } from 'lucide-react';
 import { PanelHeader, Badge, EmptyState, number } from './common.jsx';
 
 export function IpPage() {
@@ -26,7 +26,12 @@ export function IpPage() {
     return () => { active = false; };
   }, [ip]);
 
-  if (loading) return <div style={{ padding: '40px', textAlign: 'center' }}>Loading IP profile...</div>;
+  if (loading) return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '80vh', gap: '16px' }}>
+      <Loader2 size={36} className="animate-spin" style={{ color: 'var(--color-brand)' }} />
+      <div style={{ fontSize: '15px', fontWeight: '500', color: 'var(--color-text-secondary)' }}>Querying IP infrastructure & routing registry...</div>
+    </div>
+  );
   if (!report) return <EmptyState label="IP profile not found" />;
 
   return (

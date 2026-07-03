@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, NavLink } from 'react-router-dom';
 import { api, API_BASE_URL } from '../api/client.js';
-import { ArrowLeft, User, MapPin, Smartphone, Activity, Download, Phone, Globe } from 'lucide-react';
+import { ArrowLeft, User, MapPin, Smartphone, Activity, Download, Phone, Globe, Loader2 } from 'lucide-react';
 import { PanelHeader, Badge, EmptyState, number } from './common.jsx';
 
 export function PoIPage() {
@@ -33,7 +33,13 @@ export function PoIPage() {
     return () => { active = false; };
   }, [msisdn]);
 
-  if (loading) return <div style={{ padding: '40px', textAlign: 'center' }}>Loading PoI profile...</div>;
+  if (loading) return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '80vh', gap: '16px' }}>
+      <Loader2 size={36} className="animate-spin" style={{ color: 'var(--color-brand)' }} />
+      <div style={{ fontSize: '15px', fontWeight: '500', color: 'var(--color-text-secondary)' }}>Compiling Person of Interest intelligence dossier...</div>
+      <div style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>Aggregating geolocational cell towers, associated handsets, and WhatsApp logs...</div>
+    </div>
+  );
   if (!report) return <EmptyState label="PoI profile not found" />;
 
   return (

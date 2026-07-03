@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { api } from '../api/client.js';
-import { Smartphone, Activity, Download } from 'lucide-react';
+import { Smartphone, Activity, Download, Loader2 } from 'lucide-react';
 import { PanelHeader, Badge, EmptyState, number } from './common.jsx';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -26,7 +26,12 @@ export function ImeiPage() {
     return () => { active = false; };
   }, []);
 
-  if (loading) return <div style={{ padding: '40px', textAlign: 'center' }}>Loading IMEI Intelligence...</div>;
+  if (loading) return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '80vh', gap: '16px' }}>
+      <Loader2 size={36} className="animate-spin" style={{ color: 'var(--color-brand)' }} />
+      <div style={{ fontSize: '15px', fontWeight: '500', color: 'var(--color-text-secondary)' }}>Analyzing handset signatures & IMEI logs...</div>
+    </div>
+  );
   if (!report.length) return <EmptyState label="No IMEI data available in evidence store" />;
 
   const chartData = report.slice(0, 10).map(r => ({
