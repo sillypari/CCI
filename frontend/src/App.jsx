@@ -5,7 +5,6 @@ import { GeoMap } from "./components/GeoMap.jsx";
 import { PoIPage } from "./components/PoIPage.jsx";
 import { IpPage } from "./components/IpPage.jsx";
 import { ImeiPage } from "./components/ImeiPage.jsx";
-import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation } from "d3-force";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
@@ -322,9 +321,9 @@ function App() {
             <Route path="/extractions" element={<ExtractionsPage extractions={data.extractions} runExtraction={runExtraction} />} />
             <Route path="/map" element={<MapPage runExtraction={runExtraction} sessionCount={data.stats.sessions} />} />
             <Route path="/analytics" element={<AnalyticsPage timeline={data.timeline} applications={data.applications} patterns={data.patterns} />} />
-            <Route path="/poi/:msisdn" element={<PoIPage />} />
-            <Route path="/ip/:ip" element={<IpPage />} />
-            <Route path="/imei" element={<ImeiPage />} />
+            <Route path="/poi/:msisdn" element={<PoIPage sessionCount={data.stats.sessions} />} />
+            <Route path="/ip/:ip" element={<IpPage sessionCount={data.stats.sessions} />} />
+            <Route path="/imei" element={<ImeiPage sessionCount={data.stats.sessions} />} />
             <Route path="/reports" element={<ReportsPage sessions={data.sessions} sessionCount={data.stats.sessions} />} />
             <Route path="/packages" element={<PackagesPage packagesList={data.packages} />} />
             <Route path="/audit" element={<AuditPage auditLogs={data.auditLogs} />} />
@@ -391,8 +390,7 @@ function Shell({ apiLive, apiError, children }) {
               aria-label={label}
               data-tooltip={label}
               onClick={() => setMobileOpen(false)}
-              className={({ isActive }) => 
-av-item ${isActive ? "active" : ""}`}
+              className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
             >
               <Icon size={20} />
               <span>{label}</span>
@@ -1951,6 +1949,69 @@ function normalizeGraphResponse(payload) {
     metrics: { ...emptyGraphData.metrics, ...(graph.metrics ?? {}) }
   };
 }
+function layoutCommunicationGraph(nodes, links, width, height) {
+  const sourceNodes = nodes
+    .filter((node) => node.kind === "source")
+    .sort((a, b) => (b.count ?? 0) - (a.count ?? 0) || a.id.localeCompare(b.id));
+  const destinationNodes = nodes
+    .filter((node) => node.kind !== "source")
+    .sort((a, b) => (b.count ?? 0) - (a.count ?? 0) || a.id.localeCompare(b.id));
+  const sourceIds = new Set(sourceNodes.map((node) => node.id));
+  const positions = new Map();
+  const sourceSpacing = height / (sourceNodes.length + 1 || 2);
+
+  sourceNodes.forEach((node, index) => {
+    positions.set(node.id, {
+      x: sourceNodes.length <= 1 ? 190 : 150,
+      y: sourceNodes.length <= 1 ? height / 2 : sourceSpacing * (index + 1)
+    });
+  });
+
+  const destinationSource = new Map();
+  const rankedLinks = [...links].sort((a, b) => (b.count ?? 0) - (a.count ?? 0));
+  rankedLinks.forEach((link) => {
+    if (!sourceIds.has(link.sourceId) || destinationSource.has(link.targetId)) return;
+    destinationSource.set(link.targetId, link.sourceId);
+  });
+
+  const groupedDestinations = new Map(sourceNodes.map((source) => [source.id, []]));
+  destinationNodes.forEach((node) => {
+    const sourceId = destinationSource.get(node.id) ?? sourceNodes[0]?.id ?? "unassigned";
+    if (!groupedDestinations.has(sourceId)) groupedDestinations.set(sourceId, []);
+    groupedDestinations.get(sourceId).push(node);
+  });
+
+  if (!sourceNodes.length) {
+    const rows = Math.max(1, Math.ceil(Math.sqrt(destinationNodes.length || 1)));
+    destinationNodes.forEach((node, index) => {
+      positions.set(node.id, {
+        x: 180 + Math.floor(index / rows) * 132,
+        y: 90 + (index % rows) * 74
+      });
+    });
+    return positions;
+  }
+
+  sourceNodes.forEach((source, sourceIndex) => {
+    const destinations = groupedDestinations.get(source.id) ?? [];
+    const sourcePoint = positions.get(source.id);
+    const rowsPerColumn = sourceNodes.length === 1 ? Math.max(6, Math.floor((height - 140) / 74)) : 7;
+    destinations.forEach((node, index) => {
+      const column = Math.floor(index / rowsPerColumn);
+      const row = index % rowsPerColumn;
+      const rowCount = Math.min(destinations.length - column * rowsPerColumn, rowsPerColumn);
+      const originY = sourceNodes.length === 1
+        ? 82
+        : sourcePoint.y - ((rowCount - 1) * 64) / 2;
+      positions.set(node.id, {
+        x: 520 + column * 136 + (sourceIndex % 2) * 24,
+        y: originY + row * (sourceNodes.length === 1 ? 74 : 64)
+      });
+    });
+  });
+
+  return positions;
+}
 function NetworkGraph({ graphData, selected, onSelect, onExtract }) {
   const VIEW_WIDTH = 1120;
   const VIEW_HEIGHT = 640;
@@ -1967,27 +2028,8 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract }) {
     const sourceGraph = graphData ?? emptyGraphData;
     const nodes = sourceGraph.nodes ?? [];
     const links = sourceGraph.links ?? [];
-    const simulationNodes = nodes.map((node, index) => ({ ...node, x: 180 + index * 42, y: 160 + index * 22 }));
-    const simulationLinks = links.map((link) => ({ ...link, source: link.sourceId, target: link.targetId }));
-
-    if (simulationNodes.length > 1) {
-      const simulation = forceSimulation(simulationNodes)
-        .force("link", forceLink(simulationLinks).id((node) => node.id).distance((link) => link.classification === "p2p" ? 185 : 150).strength(0.55))
-        .force("charge", forceManyBody().strength(-720))
-        .force("center", forceCenter(VIEW_WIDTH / 2, VIEW_HEIGHT / 2))
-        .force("collide", forceCollide((node) => node.kind === "source" ? 58 : 48))
-        .stop();
-
-      for (let index = 0; index < 120; index += 1) {
-        simulation.tick();
-      }
-    } else if (simulationNodes.length === 1) {
-      simulationNodes[0].x = VIEW_WIDTH / 2;
-      simulationNodes[0].y = VIEW_HEIGHT / 2;
-    }
-
-    const positions = new Map(simulationNodes.map((node) => [node.id, { x: node.x, y: node.y }]));
-    const positionedNodes = nodes.map((node) => ({ ...node, ...positions.get(node.id) }));
+    const layout = layoutCommunicationGraph(nodes, links, VIEW_WIDTH, VIEW_HEIGHT);
+    const positionedNodes = nodes.map((node) => ({ ...node, ...layout.get(node.id) }));
     const metrics = sourceGraph.metrics ?? emptyGraphData.metrics;
 
     return {
@@ -2166,7 +2208,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract }) {
   };
 
   useEffect(() => {
-    const target = svgRef.current;
+    const target = canvasRef.current;
     if (!target) return undefined;
     const handleWheel = (event) => {
       event.preventDefault();
@@ -2217,9 +2259,11 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract }) {
 
   const selectedNode = selected?.type === "node" ? selected.node : null;
   const selectedEdge = selected?.type === "edge" ? selected.link : null;
+  const denseGraph = graph.nodes.length > 300 || graph.links.length > 300;
+  const showLinkLabels = graph.links.length <= 160;
 
   return (
-    <div className="network-workspace">
+    <div className={`network-workspace ${denseGraph ? "is-dense" : ""}`}>
       <div className="network-stage">
         <div className="graph-statusbar">
           <GraphMetric label="Sessions" value={graph.metrics.sessions} />
@@ -2275,7 +2319,9 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract }) {
                         strokeWidth={2 + Math.min(link.count, 4)}
                         markerEnd={`url(#arrow-${link.classification === "relay" ? "relay" : "p2p"})`}
                       />
-                      <text className="graph-link-label" x={midX} y={midY - 8} textAnchor="middle">{link.count} session{link.count === 1 ? "" : "s"}</text>
+                      {showLinkLabels ? (
+                        <text className="graph-link-label" x={midX} y={midY - 8} textAnchor="middle">{link.count} session{link.count === 1 ? "" : "s"}</text>
+                      ) : null}
                     </g>
                   );
                 })}

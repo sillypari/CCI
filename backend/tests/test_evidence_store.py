@@ -257,3 +257,22 @@ def test_graph_and_report_exports_are_investigator_readable(tmp_path: Path) -> N
     assert "49.36.128.45" in ip_csv
     assert "PoI Summary" in poi_html
     assert "IP Summary" in ip_html
+
+def test_communication_graph_returns_bounded_top_flow_samples(tmp_path: Path) -> None:
+    evidence_store = EvidenceStore(tmp_path)
+    header = "msisdn,source_ip,source_port,destination_ip,destination_port,protocol,duration_seconds,bytes_up,bytes_down,started_at"
+    rows = [header]
+    for index in range(20):
+        rows.append(
+            f"919876543210,10.12.1.8,{49152 + index},49.36.128.{45 + (index % 5)},45892,UDP,60,1000,{5000 + index},2026-07-03T10:{index:02d}:00+05:30"
+        )
+    evidence_store.ingest_upload("many_edges.csv", "\n".join(rows).encode("utf-8"))
+
+    graph = evidence_store.communication_graph(msisdn="919876543210", limit=2, scan_limit=100)
+
+    assert graph.metrics.sessions == 20
+    assert graph.metrics.edges == 2
+    assert len(graph.links) == 2
+    assert len(graph.nodes) <= 3
+    assert all(len(link.sessions) <= 4 for link in graph.links)
+    assert len(graph.sessions) <= 8

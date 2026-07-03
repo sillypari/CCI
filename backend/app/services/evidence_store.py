@@ -263,6 +263,11 @@ class EvidenceStore:
                 connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_msisdn ON sessions (a_party_msisdn)")
                 connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_dest_ip ON sessions (destination_ip)")
                 connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_classification ON sessions (classification)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions (started_at DESC)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_msisdn_started ON sessions (a_party_msisdn, started_at DESC)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_ip_started ON sessions (destination_ip, started_at DESC)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_case_started ON sessions (case_id, started_at DESC)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_class_started ON sessions (classification, started_at DESC)")
         finally:
             connection.close()
 
@@ -1173,8 +1178,12 @@ class EvidenceStore:
 
         if msisdn:
             needle_msisdn = re.sub(r"\D", "", msisdn)
-            query += " AND a_party_msisdn LIKE ?"
-            params.append(f"%{needle_msisdn}%")
+            if len(needle_msisdn) >= 10:
+                query += " AND a_party_msisdn = ?"
+                params.append(needle_msisdn)
+            else:
+                query += " AND a_party_msisdn LIKE ?"
+                params.append(f"%{needle_msisdn}%")
         if classification:
             query += " AND classification = ?"
             params.append(classification)
@@ -1182,8 +1191,16 @@ class EvidenceStore:
             query += " AND case_id = ?"
             params.append(case_id)
         if destination_ip:
-            query += " AND destination_ip LIKE ?"
-            params.append(f"%{destination_ip}%")
+            try:
+                exact_destination_ip = str(ipaddress.ip_address(destination_ip))
+            except ValueError:
+                exact_destination_ip = None
+            if exact_destination_ip:
+                query += " AND destination_ip = ?"
+                params.append(exact_destination_ip)
+            else:
+                query += " AND destination_ip LIKE ?"
+                params.append(f"%{destination_ip}%")
         if imei:
             query += " AND json_extract(payload_json, '$.imei') LIKE ?"
             params.append(f"%{imei}%")
@@ -1942,6 +1959,16 @@ class EvidenceStore:
                 connection.execute("CREATE TABLE IF NOT EXISTS uploads (id TEXT PRIMARY KEY, filename TEXT, case_id TEXT, status TEXT, rows_total INTEGER, rows_valid INTEGER, rows_quarantined INTEGER, created_at TEXT, payload_json TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS ingestion_jobs (id TEXT PRIMARY KEY, upload_id TEXT, filename TEXT, case_id TEXT, status TEXT, progress INTEGER, created_at TEXT, completed_at TEXT, payload_json TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, upload_id TEXT, case_id TEXT, a_party_msisdn TEXT, source_ip TEXT, source_port INTEGER, translated_ip TEXT, translated_port INTEGER, destination_ip TEXT, destination_port INTEGER, started_at TEXT, classification TEXT, confidence REAL, source_file TEXT, row_number INTEGER, payload_json TEXT NOT NULL)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_case_id ON sessions (case_id)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_upload_id ON sessions (upload_id)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_msisdn ON sessions (a_party_msisdn)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_dest_ip ON sessions (destination_ip)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_classification ON sessions (classification)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions (started_at DESC)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_msisdn_started ON sessions (a_party_msisdn, started_at DESC)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_ip_started ON sessions (destination_ip, started_at DESC)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_case_started ON sessions (case_id, started_at DESC)")
+                connection.execute("CREATE INDEX IF NOT EXISTS idx_sessions_class_started ON sessions (classification, started_at DESC)")
                 connection.execute("CREATE TABLE IF NOT EXISTS investigation_reports (id TEXT PRIMARY KEY, report_type TEXT, subject TEXT, created_at TEXT, payload_json TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, timestamp TEXT, action TEXT, entity_type TEXT, entity_id TEXT, payload_json TEXT NOT NULL)")
                 for table in ("cases", "uploads", "ingestion_jobs", "sessions", "investigation_reports", "audit_logs"):
