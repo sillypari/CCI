@@ -82,6 +82,8 @@ export const api = {
   deleteUpload: (uploadId) => request(`/uploads/${encodeURIComponent(uploadId)}`, { method: "DELETE" }),
   deleteCase: (caseId) => request(`/cases/${encodeURIComponent(caseId)}`, { method: "DELETE" }),
   uploadJobs: () => request("/uploads/jobs"),
+  deleteJob: (jobId) => request(`/uploads/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" }),
+  clearJobs: () => request("/uploads/jobs", { method: "DELETE" }),
   sessions: (query = "") => request(`/sessions${query}`),
   graph: (query = "") => request(`/graph${query}`),
   patterns: () => request("/analytics/patterns"),

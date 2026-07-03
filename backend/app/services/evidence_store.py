@@ -8,6 +8,7 @@ import json
 import re
 import sqlite3
 import uuid
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -594,6 +595,21 @@ class EvidenceStore:
         with self._lock:
             return next((job for job in self.jobs if job.id == job_id), None)
 
+    def delete_job(self, job_id: str) -> bool:
+        with self._lock:
+            initial_len = len(self.jobs)
+            self.jobs = [job for job in self.jobs if job.id != job_id]
+            if len(self.jobs) < initial_len:
+                self._save()
+                return True
+            return False
+
+    def clear_jobs(self) -> None:
+        with self._lock:
+            # Clear finished or failed jobs, keep processing ones
+            self.jobs = [job for job in self.jobs if job.status == "processing"]
+            self._save()
+
     def list_uploads(self) -> list[UploadStatus]:
         with self._lock:
             return sorted(self.uploads, key=lambda item: item.created_at, reverse=True)
@@ -701,6 +717,7 @@ class EvidenceStore:
         )
 
     def ingest_upload(self, filename: str, content: bytes, case_id: str | None = None, import_spec_id: str | None = None) -> UploadStatus:
+        start_time_secs = time.time()
         if not content:
             raise UploadValidationError("Uploaded file is empty")
 
@@ -755,6 +772,7 @@ class EvidenceStore:
 
         sessions: list[SessionRecord] = []
         quarantine: list[QuarantineRecord] = []
+        chunk_log = max(1, len(rows) // 20)
         for row_number, row in enumerate(rows, start=1):
             row_filename = self._safe_filename(str(row.get("source_file") or safe_filename))
             try:
@@ -764,6 +782,18 @@ class EvidenceStore:
             except (TypeError, ValueError) as exc:
                 quarantine.append(QuarantineRecord(row_number=row_number, reason=str(exc)))
 
+            # Progressive row logging (5% increments) in memory
+            if row_number % chunk_log == 0 or row_number == len(rows):
+                with self._lock:
+                    for j in self.jobs:
+                        if j.id == job.id:
+                            j.progress = int(5 + 90 * (row_number / len(rows)))
+                            j.rows_total = len(rows)
+                            j.rows_valid = len(sessions)
+                            j.rows_quarantined = len(quarantine)
+                            j.message = f"Ingesting rows ({row_number:,} / {len(rows):,})"
+
+        elapsed_sec = time.time() - start_time_secs
         status = "completed" if sessions else "failed"
         upload = UploadStatus(
             id=upload_id,
@@ -777,7 +807,7 @@ class EvidenceStore:
             progress=100,
             created_at=job.created_at,
             completed_at=now_ist(),
-            message=self._upload_message(len(sessions), len(quarantine)),
+            message=self._upload_message(len(sessions), len(quarantine), elapsed=elapsed_sec),
             quarantine_errors=quarantine[:100],
             format_report=report,
         )
@@ -872,12 +902,13 @@ class EvidenceStore:
                 return
         self.jobs.append(replacement)
 
-    def _upload_message(self, valid: int, quarantined: int) -> str:
+    def _upload_message(self, valid: int, quarantined: int, elapsed: float | None = None) -> str:
+        time_suffix = f" in {elapsed:.1f}s" if elapsed is not None else ""
         if valid and quarantined:
-            return f"Ingested {valid} rows; quarantined {quarantined} rows requiring review"
+            return f"Ingested {valid} rows; quarantined {quarantined} rows requiring review{time_suffix}"
         if valid:
-            return f"Ingested {valid} rows"
-        return f"No valid rows ingested; quarantined {quarantined} rows"
+            return f"Ingested {valid} rows{time_suffix}"
+        return f"No valid rows ingested; quarantined {quarantined} rows{time_suffix}" 
 
     def _session_from_row(self, upload_id: str, filename: str, row_number: int, row: dict[str, Any], case_id: str = "CASE-GENERAL") -> SessionRecord:
         normalized = {self._normalize_key(str(key)): self._clean_value(value) for key, value in row.items() if key is not None}

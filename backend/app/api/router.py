@@ -112,6 +112,17 @@ async def ingestion_job(job_id: str) -> IngestionJob:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ingestion job not found")
     return job
 
+@api_router.delete("/uploads/jobs/{job_id}", tags=["uploads"])
+async def delete_ingestion_job(job_id: str) -> dict[str, str]:
+    if store.delete_job(job_id):
+        return {"status": "success", "message": "Job deleted"}
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+@api_router.delete("/uploads/jobs", tags=["uploads"])
+async def clear_ingestion_jobs() -> dict[str, str]:
+    store.clear_jobs()
+    return {"status": "success", "message": "Job history cleared"}
+
 
 @api_router.post("/uploads/validate", response_model=AdapterValidationReport, tags=["uploads"])
 async def validate_upload(

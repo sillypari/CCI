@@ -811,9 +811,39 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
           </table>
         </div>
         <div className="queue-ledger">
-          <h3>Ingestion Jobs</h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+            <h3 style={{ margin: 0 }}>Ingestion Jobs</h3>
+            {jobs.some(j => j.status !== "processing") && (
+              <button 
+                onClick={async () => {
+                  try {
+                    await api.clearJobs();
+                    const updatedJobs = await api.uploadJobs();
+                    setJobs(updatedJobs);
+                  } catch (err) {
+                    console.error("Failed to clear jobs:", err);
+                  }
+                }}
+                style={{
+                  fontSize: "11px",
+                  background: "none",
+                  border: "none",
+                  color: "var(--color-danger)",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  padding: "4px 8px",
+                  borderRadius: "4px"
+                }}
+                title="Clear finished and failed jobs history"
+              >
+                <Trash2 size={12} /> Clear History
+              </button>
+            )}
+          </div>
           <div className="job-list">
-            {jobs.length ? jobs.slice(0, 5).map((job) => {
+            {jobs.length ? [...jobs].reverse().slice(0, 5).map((job) => {
               const isWorking = job.status === "processing" || job.status === "pending";
               
               // Calculate elapsed time and rows/sec speed
@@ -823,9 +853,12 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
               
               let speedMessage = "";
               if (isWorking) {
-                speedMessage = speedRowsPerSec > 0 ? `Ingesting: ${number(speedRowsPerSec)} rows/s` : "Starting...";
+                const rowProgMessage = job.message || "Starting...";
+                speedMessage = speedRowsPerSec > 0 
+                  ? `${rowProgMessage} (${number(speedRowsPerSec)} rows/s)` 
+                  : rowProgMessage;
               } else if (job.status === "completed") {
-                speedMessage = `Completed (${number(job.rows_valid)} rows)`;
+                speedMessage = job.message || `Completed (${number(job.rows_valid)} rows)`;
               } else {
                 speedMessage = `Failed (${job.message || "Unknown error"})`;
               }
@@ -846,6 +879,35 @@ function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadF
                       <Badge tone={job.status === "completed" ? "success" : job.status === "failed" ? "danger" : "warning"}>
                         {job.progress}%
                       </Badge>
+                      {!isWorking && (
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            try {
+                              await api.deleteJob(job.id);
+                              const updatedJobs = await api.uploadJobs();
+                              setJobs(updatedJobs);
+                            } catch (err) {
+                              console.error("Failed to delete job:", err);
+                            }
+                          }}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            color: "var(--color-text-secondary)",
+                            cursor: "pointer",
+                            padding: "2px",
+                            borderRadius: "4px",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center"
+                          }}
+                          className="hover:text-red-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+                          title="Delete job entry"
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
                     </div>
                   </div>
                   <div style={{ width: "100%", height: "4px", background: "var(--color-border-subtle)", borderRadius: "2px", overflow: "hidden" }}>
