@@ -443,7 +443,12 @@ function DashboardPage({ data }) {
         <StatCard icon={Gauge} label="Quarantine" value={number(data.stats.quarantined_rows)} tone="warning" />
       </div>
 
-      <section className="panel span-7">
+      <motion.section 
+        className="panel span-7"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.08, duration: 0.22 }}
+      >
         <PanelHeader icon={Activity} title="Processing Overview" action={<Badge tone="success">Healthy</Badge>} />
         <div className="timeline">
           {["Upload", "Detect", "Normalize", "Classify", "Extract"].map((item, index) => (
@@ -456,9 +461,14 @@ function DashboardPage({ data }) {
             </div>
           ))}
         </div>
-      </section>
+      </motion.section>
 
-      <section className="panel span-5">
+      <motion.section 
+        className="panel span-5"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.12, duration: 0.22 }}
+      >
         <PanelHeader icon={ShieldCheck} title="Latest Upload" action={<Badge tone="brand">{data.stats.latest_upload?.status ?? "none"}</Badge>} />
         {data.stats.latest_upload ? (
           <div className="upload-summary">
@@ -473,7 +483,7 @@ function DashboardPage({ data }) {
         ) : (
           <EmptyState label="No uploads yet" />
         )}
-      </section>
+      </motion.section>
 
       <section className="panel span-5">
         <PanelHeader icon={AlertTriangle} title="Investigation Signals" action={<Badge tone={topPatterns.length ? "warning" : "success"}>{topPatterns.length}</Badge>} />
@@ -1459,7 +1469,13 @@ function AnalyticsPage({ timeline, applications, patterns }) {
   const maxSessions = Math.max(1, ...points.map((item) => item.sessions));
   return (
     <motion.section {...pageMotion} className="page-grid">
-      <section className="panel span-8">
+      <motion.section 
+        className="panel span-8"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.04, duration: 0.22 }}
+        style={{ display: "flex", flexDirection: "column" }}
+      >
         <PanelHeader
           icon={BarChart3}
           title="Timeline Analysis"
@@ -1479,7 +1495,7 @@ function AnalyticsPage({ timeline, applications, patterns }) {
             />
           }
         />
-        <div className="timeline-chart" style={{ position: "relative", minHeight: "200px" }}>
+        <div className="timeline-chart" style={{ position: "relative", maxHeight: "310px", overflowY: "auto", paddingRight: "4px" }}>
           {busy && (
             <div style={{
               position: "absolute",
@@ -1505,10 +1521,16 @@ function AnalyticsPage({ timeline, applications, patterns }) {
             </div>
           )) : <EmptyState label="No timeline data yet" />}
         </div>
-      </section>
-      <section className="panel span-4">
+      </motion.section>
+      <motion.section 
+        className="panel span-4"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.08, duration: 0.22 }}
+        style={{ display: "flex", flexDirection: "column" }}
+      >
         <PanelHeader icon={Activity} title="Applications" action={<Badge tone="brand">{applications.length}</Badge>} />
-        <div className="signal-list compact-list">
+        <div className="signal-list compact-list" style={{ maxHeight: "310px", overflowY: "auto", paddingRight: "4px" }}>
           {applications.length ? applications.map((item) => (
             <article className="signal-row" key={item.name}>
               <div><strong>{item.name}</strong><p>{item.operator} | {item.destination_ips} IPs | {formatDuration(item.duration_seconds)}</p></div>
@@ -1516,11 +1538,19 @@ function AnalyticsPage({ timeline, applications, patterns }) {
             </article>
           )) : <EmptyState label="No application summary" />}
         </div>
-      </section>
-      <section className="panel span-12">
+      </motion.section>
+      <motion.section 
+        className="panel span-12"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.12, duration: 0.22 }}
+        style={{ display: "flex", flexDirection: "column" }}
+      >
         <PanelHeader icon={AlertTriangle} title="Detection Signals" action={<Badge tone={patterns.length ? "warning" : "success"}>{patterns.length}</Badge>} />
-        {patterns.length ? <SignalList patterns={patterns} /> : <EmptyState label="No suspicious signals detected" />}
-      </section>
+        <div style={{ maxHeight: "250px", overflowY: "auto", paddingRight: "4px" }}>
+          {patterns.length ? <SignalList patterns={patterns} /> : <EmptyState label="No suspicious signals detected" />}
+        </div>
+      </motion.section>
     </motion.section>
   );
 }
@@ -2593,11 +2623,17 @@ function SystemPanel({ stats, apiLive, persistence, createPersistenceSnapshot })
 
 function StatCard({ icon: Icon, label, value, tone = "neutral" }) {
   return (
-    <div className={`stat-card ${tone}`}>
+    <motion.div 
+      className={`stat-card ${tone}`}
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      whileHover={{ y: -4, transition: { duration: 0.12 } }}
+      transition={{ duration: 0.22, ease: "easeOut" }}
+    >
       <span className="stat-card__icon"><Icon size={18} /></span>
       <span>{label}</span>
       <strong>{value}</strong>
-    </div>
+    </motion.div>
   );
 }
 
