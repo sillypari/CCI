@@ -80,9 +80,59 @@ class IPDecoder:
             except Exception as e:
                 logger.error(f"Failed to load platform ASNs: {e}")
 
+    def _check_store_platform_ranges(self, ip: str) -> tuple[Optional[str], Optional[str]]:
+        try:
+            from app.services.evidence_store import store
+            import ipaddress
+            ip_obj = ipaddress.ip_address(ip)
+            for rng in store.platform_ranges:
+                if not rng.active:
+                    continue
+                try:
+                    net = ipaddress.ip_network(rng.cidr, strict=False)
+                    if ip_obj in net:
+                        return rng.platform, rng.asn
+                except ValueError:
+                    continue
+        except Exception:
+            pass
+        return None, None
+
     def decode(self, ip: str) -> IPDecodeResult:
         result = IPDecodeResult(ip=ip)
         if not ip:
+            return result
+
+        # 0. Check custom platform ranges from settings first
+        platform_name, platform_asn = self._check_store_platform_ranges(ip)
+        if platform_name:
+            result.is_platform_relay = True
+            result.platform_name = platform_name
+            result.asn = platform_asn or "AS0"
+            if "WhatsApp" in platform_name or "Meta" in platform_name:
+                result.asn_name = "Meta Platforms, Inc."
+                result.country = "United States"
+            elif "Telegram" in platform_name:
+                result.asn_name = "Telegram Messenger Inc"
+                result.country = "United Kingdom"
+            elif "Signal" in platform_name:
+                result.asn_name = "Signal Messenger LLC"
+                result.country = "United States"
+            elif "Google" in platform_name:
+                result.asn_name = "Google LLC"
+                result.country = "United States"
+            else:
+                result.asn_name = f"{platform_name} Network"
+                result.country = "Global"
+
+            # Refine location if Geo database is active
+            if self.geo_city:
+                try:
+                    response = self.geo_city.city(ip)
+                    result.country = response.country.name or result.country
+                    result.city = response.city.name
+                except Exception:
+                    pass
             return result
             
         # 1. ASN Lookup (try pyasn first, fallback to geoip2 ASN)
