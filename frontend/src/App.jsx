@@ -1495,7 +1495,7 @@ function AnalyticsPage({ timeline, applications, patterns }) {
             />
           }
         />
-        <div className="timeline-chart" style={{ position: "relative", maxHeight: "310px", overflowY: "auto", paddingRight: "4px" }}>
+        <div style={{ position: "relative", maxHeight: "310px", overflowY: "auto", paddingRight: "4px" }}>
           {busy && (
             <div style={{
               position: "absolute",
@@ -1513,13 +1513,15 @@ function AnalyticsPage({ timeline, applications, patterns }) {
               <Loader2 className="animate-spin" size={24} style={{ color: "var(--color-brand)" }} />
             </div>
           )}
-          {points.length ? points.map((item) => (
-            <div className="timeline-bar" key={item.bucket}>
-              <span className="timeline-bar__label">{item.label}</span>
-              <div className="timeline-bar__track"><span style={{ width: `${Math.max(4, (item.sessions / maxSessions) * 100)}%` }} /></div>
-              <strong>{item.sessions}</strong>
-            </div>
-          )) : <EmptyState label="No timeline data yet" />}
+          <div className="timeline-chart">
+            {points.length ? points.map((item) => (
+              <div className="timeline-bar" key={item.bucket}>
+                <span className="timeline-bar__label">{item.label}</span>
+                <div className="timeline-bar__track"><span style={{ width: `${Math.max(4, (item.sessions / maxSessions) * 100)}%` }} /></div>
+                <strong>{item.sessions}</strong>
+              </div>
+            )) : <EmptyState label="No timeline data yet" />}
+          </div>
         </div>
       </motion.section>
       <motion.section 
@@ -1530,13 +1532,15 @@ function AnalyticsPage({ timeline, applications, patterns }) {
         style={{ display: "flex", flexDirection: "column" }}
       >
         <PanelHeader icon={Activity} title="Applications" action={<Badge tone="brand">{applications.length}</Badge>} />
-        <div className="signal-list compact-list" style={{ maxHeight: "310px", overflowY: "auto", paddingRight: "4px" }}>
-          {applications.length ? applications.map((item) => (
-            <article className="signal-row" key={item.name}>
-              <div><strong>{item.name}</strong><p>{item.operator} | {item.destination_ips} IPs | {formatDuration(item.duration_seconds)}</p></div>
-              <Badge tone="neutral">{item.sessions}</Badge>
-            </article>
-          )) : <EmptyState label="No application summary" />}
+        <div style={{ maxHeight: "310px", overflowY: "auto", paddingRight: "4px" }}>
+          <div className="signal-list compact-list">
+            {applications.length ? applications.map((item) => (
+              <article className="signal-row" key={item.name}>
+                <div><strong>{item.name}</strong><p>{item.operator} | {item.destination_ips} IPs | {formatDuration(item.duration_seconds)}</p></div>
+                <Badge tone="neutral">{item.sessions}</Badge>
+              </article>
+            )) : <EmptyState label="No application summary" />}
+          </div>
         </div>
       </motion.section>
       <motion.section 
