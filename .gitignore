@@ -14,3 +14,4 @@ dist/
 .vite/
 *.log
 .pytest_tmp/
+backend/data/
