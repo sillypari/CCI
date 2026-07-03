@@ -417,6 +417,16 @@ svg {
   color: white;
 }
 
+.button.danger {
+  background: var(--color-danger);
+  color: white;
+}
+
+.button.danger:hover {
+  background: #bd3937;
+  color: white;
+}
+
 .button.secondary,
 .icon-button {
   background: transparent;
@@ -2265,6 +2275,7 @@ tbody tr:hover {
 }
 
 .graph-link-hit {
+  fill: none;
   stroke: transparent;
   stroke-width: 18;
   pointer-events: stroke;
@@ -3611,4 +3622,16 @@ tbody tr:hover {
   .geo-map-toolbar .select-control {
     width: 100%;
   }
+}
+
+.network-workspace.is-dense .graph-node:not(.source) .graph-node-title {
+  display: none;
+}
+
+.network-workspace.is-dense .graph-node circle {
+  stroke-width: 2;
+}
+
+.network-workspace.is-dense .graph-node.source .graph-node-title {
+  font-size: 9px;
 }

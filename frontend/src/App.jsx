@@ -13,6 +13,7 @@ import {
   BriefcaseBusiness,
   Check,
   CheckCircle2,
+  Code,
   ChevronDown,
   Clipboard,
   Copy,
@@ -2774,12 +2775,23 @@ function SystemPanel({ stats, apiLive, persistence, createPersistenceSnapshot, r
           <strong style={{ display: "block", fontSize: "14px", marginTop: "6px", marginBottom: "14px" }}>Pramaan IPDR Engine — Built by</strong>
           <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
             {[
-              { name: "Parikshit Singh Bais", role: "Senior Developer", icon: "💻" },
-              { name: "Adarsh Singh",         role: "Project Manager",  icon: "🗂️" },
-              { name: "Akmal Qureshi",        role: "Researcher",       icon: "🔬" },
+              { name: "Parikshit Singh Bais", role: "Senior Developer", icon: Code, color: "var(--color-brand)" },
+              { name: "Adarsh Singh",         role: "Project Manager",  icon: BriefcaseBusiness, color: "var(--color-warning)" },
+              { name: "Akmal Qureshi",        role: "Researcher",       icon: Search, color: "var(--color-success)" },
             ].map((member) => (
               <div key={member.name} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 14px", borderRadius: "8px", background: "var(--panel-bg)", border: "1px solid var(--border)" }}>
-                <span style={{ fontSize: "20px", lineHeight: 1 }}>{member.icon}</span>
+                <span style={{ 
+                  display: "flex", 
+                  alignItems: "center", 
+                  justifyContent: "center", 
+                  width: "28px", 
+                  height: "28px", 
+                  borderRadius: "6px", 
+                  background: "var(--color-border-subtle)", 
+                  color: member.color 
+                }}>
+                  <member.icon size={14} />
+                </span>
                 <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
                   <strong style={{ fontSize: "13px", color: "var(--color-text-primary)" }}>{member.name}</strong>
                   <span style={{ fontSize: "11px", color: "var(--color-text-muted)", letterSpacing: "0.3px" }}>{member.role}</span>
@@ -2805,7 +2817,6 @@ function SystemPanel({ stats, apiLive, persistence, createPersistenceSnapshot, r
             variant="danger" 
             onClick={performReset} 
             disabled={busy}
-            style={{ background: "var(--color-danger)", borderColor: "var(--color-danger)" }}
           >
             {busy ? "Resetting..." : "Reset to 0"}
           </Button>
