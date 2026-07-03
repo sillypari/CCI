@@ -1292,16 +1292,17 @@ function MapPage({ initialGraph, runExtraction }) {
   const [graphData, setGraphData] = useState(() => normalizeGraphResponse(initialGraph));
   const [graphBusy, setGraphBusy] = useState(false);
   const [graphError, setGraphError] = useState("");
+  const [graphLimit, setGraphLimit] = useState(250); // Default Top 250 links for 0-lag rendering
   const deferredMsisdn = useDeferredValue(msisdn);
   const exportQuery = useMemo(() => {
     const params = new URLSearchParams();
     const trimmedMsisdn = msisdn.trim();
     if (trimmedMsisdn) params.set("msisdn", trimmedMsisdn);
     if (classification !== "all") params.set("classification", classification);
-    params.set("limit", "5000");
+    params.set("limit", String(graphLimit));
     const query = params.toString();
     return query ? `?${query}` : "";
-  }, [classification, msisdn]);
+  }, [classification, msisdn, graphLimit]);
 
   useEffect(() => {
     setGraphData(normalizeGraphResponse(initialGraph));
@@ -1314,7 +1315,7 @@ function MapPage({ initialGraph, runExtraction }) {
       const trimmedMsisdn = deferredMsisdn.trim();
       if (trimmedMsisdn) params.set("msisdn", trimmedMsisdn);
       if (classification !== "all") params.set("classification", classification);
-      params.set("limit", "5000");
+      params.set("limit", String(graphLimit));
       setGraphBusy(true);
       try {
         const payload = await api.graph(`?${params.toString()}`);
@@ -1347,6 +1348,28 @@ function MapPage({ initialGraph, runExtraction }) {
                 <Search size={16} />
                 <input aria-label="A-party MSISDN" value={msisdn} onChange={(event) => setMsisdn(event.target.value)} placeholder="Filter MSISDN" />
               </label>
+              
+              <select 
+                aria-label="Graph flow density limit"
+                value={graphLimit}
+                onChange={(e) => setGraphLimit(Number(e.target.value))}
+                style={{ 
+                  background: 'var(--color-bg-subtle)', 
+                  color: 'var(--color-text)', 
+                  border: '1px solid var(--color-border)', 
+                  borderRadius: '6px', 
+                  padding: '6px 12px',
+                  fontSize: '13px',
+                  outline: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value={100}>Top 100 Flows</option>
+                <option value={250}>Top 250 Flows</option>
+                <option value={500}>Top 500 Flows</option>
+                <option value={1000}>Top 1000 Flows</option>
+              </select>
+
               <SelectControl
                 ariaLabel="Graph classification filter"
                 value={classification}
@@ -1893,7 +1916,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract }) {
         .force("collide", forceCollide((node) => node.kind === "source" ? 58 : 48))
         .stop();
 
-      for (let index = 0; index < 260; index += 1) {
+      for (let index = 0; index < 120; index += 1) {
         simulation.tick();
       }
     } else if (simulationNodes.length === 1) {
