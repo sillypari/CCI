@@ -242,6 +242,21 @@ function App() {
     [pushToast, refresh]
   );
 
+  const resetPersistence = useCallback(
+    async () => {
+      try {
+        const status = await api.resetPersistence();
+        await refresh();
+        pushToast("success", "Database reset complete", "All records have been cleared to 0.");
+        return status;
+      } catch (error) {
+        pushToast("error", "Database reset failed", error.message);
+        return null;
+      }
+    },
+    [pushToast, refresh]
+  );
+
   const runExtraction = useCallback(
     async (payload) => {
       try {
@@ -314,7 +329,7 @@ function App() {
             <Route path="/reports" element={<ReportsPage sessions={data.sessions} />} />
             <Route path="/packages" element={<PackagesPage packagesList={data.packages} />} />
             <Route path="/audit" element={<AuditPage auditLogs={data.auditLogs} />} />
-            <Route path="/settings" element={<SettingsPage ranges={data.platformRanges} stats={data.stats} apiLive={apiLive} persistence={data.persistence} importSpecs={data.importSpecs} createImportSpec={createImportSpec} createPersistenceSnapshot={createPersistenceSnapshot} />} />
+            <Route path="/settings" element={<SettingsPage ranges={data.platformRanges} stats={data.stats} apiLive={apiLive} persistence={data.persistence} importSpecs={data.importSpecs} createImportSpec={createImportSpec} createPersistenceSnapshot={createPersistenceSnapshot} resetPersistence={resetPersistence} />} />
           </Routes>
         </AnimatePresence>
       </Shell>
@@ -1816,7 +1831,7 @@ function AuditPage({ auditLogs }) {
   );
 }
 
-function SettingsPage({ ranges, stats, apiLive, persistence, importSpecs = [], createImportSpec, createPersistenceSnapshot }) {
+function SettingsPage({ ranges, stats, apiLive, persistence, importSpecs = [], createImportSpec, createPersistenceSnapshot, resetPersistence }) {
   const [tab, setTab] = useState("ranges");
   return (
     <motion.section {...pageMotion} className="page-grid">
@@ -1835,7 +1850,7 @@ function SettingsPage({ ranges, stats, apiLive, persistence, importSpecs = [], c
         {tab === "ranges" ? <RangesTable ranges={ranges} /> : null}
         {tab === "adapters" ? <AdaptersPanel /> : null}
         {tab === "import" ? <ImportSpecsPanel importSpecs={importSpecs} createImportSpec={createImportSpec} /> : null}
-        {tab === "system" ? <SystemPanel stats={stats} apiLive={apiLive} persistence={persistence} createPersistenceSnapshot={createPersistenceSnapshot} /> : null}
+        {tab === "system" ? <SystemPanel stats={stats} apiLive={apiLive} persistence={persistence} createPersistenceSnapshot={createPersistenceSnapshot} resetPersistence={resetPersistence} /> : null}
       </section>
     </motion.section>
   );
@@ -2590,13 +2605,30 @@ function AdaptersPanel() {
   );
 }
 
-function SystemPanel({ stats, apiLive, persistence, createPersistenceSnapshot }) {
+function SystemPanel({ stats, apiLive, persistence, createPersistenceSnapshot, resetPersistence }) {
   const [busy, setBusy] = useState(false);
   const snapshot = async () => {
     if (!createPersistenceSnapshot) return;
     setBusy(true);
     try {
       await createPersistenceSnapshot();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const performReset = async () => {
+    if (!resetPersistence) return;
+    const confirmed = window.confirm(
+      "CRITICAL ACTION REQUIRED:\n\n" +
+      "Are you sure you want to perform a factory reset? This will permanently clear all uploads, cases, search history, request packages, and database logs back to 0.\n\n" +
+      "This action is completely irreversible! Proceed?"
+    );
+    if (!confirmed) return;
+
+    setBusy(true);
+    try {
+      await resetPersistence();
     } finally {
       setBusy(false);
     }
@@ -2609,6 +2641,7 @@ function SystemPanel({ stats, apiLive, persistence, createPersistenceSnapshot })
         <StatCard icon={Database} label="Rows" value={number(stats.sessions)} tone="brand" />
         <StatCard icon={AlertTriangle} label="Quarantine" value={number(stats.quarantined_rows)} tone="danger" />
       </div>
+      
       <article className="persistence-card">
         <div>
           <span>Evidence database</span>
@@ -2619,6 +2652,27 @@ function SystemPanel({ stats, apiLive, persistence, createPersistenceSnapshot })
           <Badge tone={persistence?.enabled ? "success" : "warning"}>{persistence?.enabled ? "Enabled" : "Pending"}</Badge>
           <span>{persistence?.last_snapshot_at ? `Last ${date(persistence.last_snapshot_at)}` : "No snapshot yet"}</span>
           <Button type="button" icon={Database} variant="secondary" onClick={snapshot} disabled={busy}>{busy ? "Writing" : "Write snapshot"}</Button>
+        </div>
+      </article>
+
+      <article className="persistence-card" style={{ marginTop: "16px", borderColor: "rgba(214, 76, 74, 0.25)", background: "linear-gradient(135deg, rgba(214, 76, 74, 0.03), #ffffff 52%)" }}>
+        <div>
+          <span style={{ color: "var(--color-danger)", fontWeight: "600", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.5px" }}>Danger Zone</span>
+          <strong style={{ display: "block", fontSize: "14px", marginTop: "4px" }}>Factory Reset Database</strong>
+          <p style={{ color: "var(--color-text-secondary)", fontSize: "13px", marginTop: "4px" }}>Permanently clear all target uploads, cases, search histories, request packages, and database logs to 0.</p>
+        </div>
+        <div className="persistence-card__meta">
+          <Badge tone="danger">Irreversible</Badge>
+          <Button 
+            type="button" 
+            icon={Trash2} 
+            variant="danger" 
+            onClick={performReset} 
+            disabled={busy}
+            style={{ background: "var(--color-danger)", borderColor: "var(--color-danger)" }}
+          >
+            {busy ? "Resetting..." : "Reset to 0"}
+          </Button>
         </div>
       </article>
     </div>

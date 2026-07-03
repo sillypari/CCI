@@ -1813,6 +1813,42 @@ class EvidenceStore:
             writer.writerow({field: data.get(field, "") for field in fields})
         return output.getvalue()
 
+    def reset_store(self) -> None:
+        import sqlite3
+        with self._lock:
+            # 1. Truncate sessions in SQLite database
+            connection = sqlite3.connect(self.sqlite_file)
+            try:
+                with connection:
+                    connection.execute("DELETE FROM sessions")
+                connection.isolation_level = None
+                connection.execute("VACUUM")
+            finally:
+                connection.close()
+
+            # 2. Reset in-memory state fields to default clean values
+            self.cases = self._default_cases()
+            self.import_specs = self._default_import_specs()
+            self.platform_ranges = self._default_platform_ranges()
+            self.uploads = []
+            self.jobs = []
+            self.extractions = []
+            self.packages = []
+            self.audit_logs = []
+            self.last_persistence_snapshot_at = None
+
+            # 3. Clean files in evidence_dir
+            for item in self.evidence_dir.iterdir():
+                if item.is_file():
+                    try:
+                        item.unlink()
+                    except OSError:
+                        pass
+
+            # 4. Save clean state to disk
+            self._save()
+            self._audit_unlocked("system_reset", "system", "all", {"message": "All data reset to zero."})
+
     def persistence_status(self) -> PersistenceStatus:
         connection = sqlite3.connect(self.sqlite_file)
         try:

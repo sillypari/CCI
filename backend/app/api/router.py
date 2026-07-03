@@ -404,6 +404,12 @@ async def create_persistence_snapshot() -> PersistenceStatus:
     return store.write_sqlite_snapshot()
 
 
+@api_router.post("/persistence/reset", response_model=PersistenceStatus, tags=["persistence"])
+async def reset_persistence() -> PersistenceStatus:
+    store.reset_store()
+    return store.persistence_status()
+
+
 @api_router.get("/platform-ranges", response_model=list[PlatformRange], tags=["settings"])
 async def platform_ranges() -> list[PlatformRange]:
     return store.list_platform_ranges()

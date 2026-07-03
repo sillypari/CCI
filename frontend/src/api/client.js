@@ -113,6 +113,7 @@ export const api = {
   commonWhatsapp: (query = "") => request(`/reports/common-whatsapp${query}`),
   persistenceStatus: () => request("/persistence/status"),
   createPersistenceSnapshot: () => request("/persistence/snapshot", { method: "POST" }),
+  resetPersistence: () => request("/persistence/reset", { method: "POST" }),
   createCase: (payload) =>
     request("/cases", {
       method: "POST",
