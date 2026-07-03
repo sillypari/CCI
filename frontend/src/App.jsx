@@ -133,14 +133,13 @@ function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const [stats, cases, importSpecs, uploads, jobs, sessions, graph, patterns, timeline, applications, extractions, packagesList, auditLogs, platformRanges, persistence] = await Promise.all([
+      const [stats, cases, importSpecs, uploads, jobs, sessions, patterns, timeline, applications, extractions, packagesList, auditLogs, platformRanges, persistence] = await Promise.all([
         api.dashboard(),
         api.cases(),
         api.importSpecs(),
         api.uploads(),
         api.uploadJobs(),
         api.sessions(),
-        api.graph(),
         api.patterns(),
         api.timeline(),
         api.applications(),
@@ -150,7 +149,7 @@ function App() {
         api.platformRanges(),
         api.persistenceStatus()
       ]);
-      setData({ stats, cases, importSpecs, uploads, jobs, sessions, graph: normalizeGraphResponse(graph), patterns, timeline, applications, extractions, packages: packagesList, auditLogs, platformRanges, persistence });
+      setData((current) => ({ ...current, stats, cases, importSpecs, uploads, jobs, sessions, patterns, timeline, applications, extractions, packages: packagesList, auditLogs, platformRanges, persistence }));
       setApiLive(true);
       setApiError("");
     } catch (error) {
@@ -321,12 +320,12 @@ function App() {
             <Route path="/uploads" element={<UploadsPage uploads={data.uploads} jobs={data.jobs} cases={data.cases} importSpecs={data.importSpecs} uploadFile={uploadFile} validateFile={validateFile} deleteUpload={deleteUpload} />} />
             <Route path="/sessions" element={<SessionsPage sessions={data.sessions} />} />
             <Route path="/extractions" element={<ExtractionsPage extractions={data.extractions} runExtraction={runExtraction} />} />
-            <Route path="/map" element={<MapPage initialGraph={data.graph} runExtraction={runExtraction} />} />
+            <Route path="/map" element={<MapPage runExtraction={runExtraction} sessionCount={data.stats.sessions} />} />
             <Route path="/analytics" element={<AnalyticsPage timeline={data.timeline} applications={data.applications} patterns={data.patterns} />} />
             <Route path="/poi/:msisdn" element={<PoIPage />} />
             <Route path="/ip/:ip" element={<IpPage />} />
             <Route path="/imei" element={<ImeiPage />} />
-            <Route path="/reports" element={<ReportsPage sessions={data.sessions} />} />
+            <Route path="/reports" element={<ReportsPage sessions={data.sessions} sessionCount={data.stats.sessions} />} />
             <Route path="/packages" element={<PackagesPage packagesList={data.packages} />} />
             <Route path="/audit" element={<AuditPage auditLogs={data.auditLogs} />} />
             <Route path="/settings" element={<SettingsPage ranges={data.platformRanges} stats={data.stats} apiLive={apiLive} persistence={data.persistence} importSpecs={data.importSpecs} createImportSpec={createImportSpec} createPersistenceSnapshot={createPersistenceSnapshot} resetPersistence={resetPersistence} />} />
@@ -392,7 +391,8 @@ function Shell({ apiLive, apiError, children }) {
               aria-label={label}
               data-tooltip={label}
               onClick={() => setMobileOpen(false)}
-              className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
+              className={({ isActive }) => 
+av-item ${isActive ? "active" : ""}`}
             >
               <Icon size={20} />
               <span>{label}</span>
@@ -1310,15 +1310,21 @@ function ExtractionsPage({ extractions, runExtraction }) {
   );
 }
 
-function MapPage({ initialGraph, runExtraction }) {
+function MapPage({ runExtraction, sessionCount = 0 }) {
   const [msisdn, setMsisdn] = useState("");
   const [classification, setClassification] = useState("all");
   const [selected, setSelected] = useState(null);
-  const [graphData, setGraphData] = useState(() => normalizeGraphResponse(initialGraph));
+  const [graphData, setGraphData] = useState(() => emptyGraphData);
   const [graphBusy, setGraphBusy] = useState(false);
   const [graphError, setGraphError] = useState("");
-  const [graphLimit, setGraphLimit] = useState(250); // Default Top 250 links for 0-lag rendering
+  const [graphLimit, setGraphLimit] = useState(250);
   const deferredMsisdn = useDeferredValue(msisdn);
+  const graphLimitOptions = [
+    { value: 100, label: "Top 100 flows" },
+    { value: 250, label: "Top 250 flows" },
+    { value: 500, label: "Top 500 flows" },
+    { value: 1000, label: "Top 1000 flows" }
+  ];
   const exportQuery = useMemo(() => {
     const params = new URLSearchParams();
     const trimmedMsisdn = msisdn.trim();
@@ -1327,20 +1333,23 @@ function MapPage({ initialGraph, runExtraction }) {
     params.set("limit", String(graphLimit));
     const query = params.toString();
     return query ? `?${query}` : "";
-  }, [classification, msisdn, graphLimit]);
-
-  useEffect(() => {
-    setGraphData(normalizeGraphResponse(initialGraph));
-  }, [initialGraph]);
+  }, [classification, graphLimit, msisdn]);
 
   useEffect(() => {
     let cancelled = false;
     const loadGraph = async () => {
+      if (!sessionCount) {
+        setGraphData(emptyGraphData);
+        setGraphBusy(false);
+        setGraphError("");
+        return;
+      }
       const params = new URLSearchParams();
       const trimmedMsisdn = deferredMsisdn.trim();
       if (trimmedMsisdn) params.set("msisdn", trimmedMsisdn);
       if (classification !== "all") params.set("classification", classification);
       params.set("limit", String(graphLimit));
+      params.set("scan_limit", "20000");
       setGraphBusy(true);
       try {
         const payload = await api.graph(`?${params.toString()}`);
@@ -1349,7 +1358,10 @@ function MapPage({ initialGraph, runExtraction }) {
           setGraphError("");
         }
       } catch (error) {
-        if (!cancelled) setGraphError(error.message);
+        if (!cancelled) {
+          setGraphData(emptyGraphData);
+          setGraphError(error.message);
+        }
       } finally {
         if (!cancelled) setGraphBusy(false);
       }
@@ -1358,7 +1370,9 @@ function MapPage({ initialGraph, runExtraction }) {
     return () => {
       cancelled = true;
     };
-  }, [classification, deferredMsisdn]);
+  }, [classification, deferredMsisdn, graphLimit, sessionCount]);
+
+  const graphStatus = sessionCount ? (graphBusy ? "Syncing" : `${number(graphData.metrics?.edges ?? 0)} visible`) : "No data";
 
   return (
     <motion.section {...pageMotion} className="page-grid">
@@ -1368,33 +1382,12 @@ function MapPage({ initialGraph, runExtraction }) {
           title="Communication Map"
           action={
             <div className="map-actions">
-              <Badge tone={graphBusy ? "warning" : "brand"}>{graphBusy ? "Syncing" : "Backend graph"}</Badge>
+              <Badge tone={graphBusy ? "warning" : sessionCount ? "brand" : "neutral"}>{graphStatus}</Badge>
               <label className="map-query">
                 <Search size={16} />
                 <input aria-label="A-party MSISDN" value={msisdn} onChange={(event) => setMsisdn(event.target.value)} placeholder="Filter MSISDN" />
               </label>
-              
-              <select 
-                aria-label="Graph flow density limit"
-                value={graphLimit}
-                onChange={(e) => setGraphLimit(Number(e.target.value))}
-                style={{ 
-                  background: 'var(--color-bg-subtle)', 
-                  color: 'var(--color-text)', 
-                  border: '1px solid var(--color-border)', 
-                  borderRadius: '6px', 
-                  padding: '6px 12px',
-                  fontSize: '13px',
-                  outline: 'none',
-                  cursor: 'pointer'
-                }}
-              >
-                <option value={100}>Top 100 Flows</option>
-                <option value={250}>Top 250 Flows</option>
-                <option value={500}>Top 500 Flows</option>
-                <option value={1000}>Top 1000 Flows</option>
-              </select>
-
+              <SelectControl ariaLabel="Graph flow density limit" value={graphLimit} onChange={setGraphLimit} options={graphLimitOptions} />
               <SelectControl
                 ariaLabel="Graph classification filter"
                 value={classification}
@@ -1413,28 +1406,15 @@ function MapPage({ initialGraph, runExtraction }) {
           }
         />
         {graphError ? <div className="graph-alert" role="alert"><AlertTriangle size={16} /> <span>{graphError}</span></div> : null}
-        <div style={{ position: "relative" }}>
-          {graphBusy && (
-            <div style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              width: "100%",
-              height: "100%",
-              background: "rgba(0,0,0,0.4)",
-              backdropFilter: "blur(2px)",
-              zIndex: 10,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "12px",
-              borderRadius: "8px"
-            }}>
-              <Loader2 size={32} className="animate-spin" style={{ color: "var(--color-brand)" }} />
-              <strong style={{ fontSize: "14px", color: "#fff" }}>Rendering network communication graph...</strong>
+        {!sessionCount ? <div className="graph-alert neutral"><Database size={16} /> <span>Upload IPDR evidence to build a communication map.</span></div> : null}
+        <div className="graph-render-wrap">
+          {graphBusy ? (
+            <div className="graph-loading-panel">
+              <Loader2 size={28} className="animate-spin" />
+              <strong>Preparing top {graphLimit} communication flows</strong>
+              <span>Aggregating sessions server-side and rendering a bounded graph slice.</span>
             </div>
-          )}
+          ) : null}
           <NetworkGraph
             graphData={graphData}
             selected={selected}
@@ -1446,7 +1426,6 @@ function MapPage({ initialGraph, runExtraction }) {
     </motion.section>
   );
 }
-
 function AnalyticsPage({ timeline, applications, patterns }) {
   const [bucket, setBucket] = useState("hour");
   const [points, setPoints] = useState(timeline);
@@ -1574,7 +1553,7 @@ function AnalyticsPage({ timeline, applications, patterns }) {
   );
 }
 
-function ReportsPage({ sessions }) {
+function ReportsPage({ sessions, sessionCount = sessions.length }) {
   const [poi, setPoi] = useState("");
   const [ip, setIp] = useState("");
   const [report, setReport] = useState(null);
@@ -1582,12 +1561,25 @@ function ReportsPage({ sessions }) {
   const [imeiRows, setImeiRows] = useState([]);
   const [locationRows, setLocationRows] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [summaryBusy, setSummaryBusy] = useState(false);
 
   useEffect(() => {
+    if (!sessionCount) {
+      setCommonApps([]);
+      setImeiRows([]);
+      setLocationRows([]);
+      setSummaryBusy(false);
+      return undefined;
+    }
     let cancelled = false;
     const loadReports = async () => {
+      setSummaryBusy(true);
       try {
-        const [apps, imeis, locations] = await Promise.all([api.commonApplications(), api.imeiFrequency(), api.locationSummary()]);
+        const [apps, imeis, locations] = await Promise.all([
+          api.commonApplications("?limit=10"),
+          api.imeiFrequency("?limit=10"),
+          api.locationSummary("?limit=10")
+        ]);
         if (!cancelled) {
           setCommonApps(apps);
           setImeiRows(imeis);
@@ -1599,14 +1591,15 @@ function ReportsPage({ sessions }) {
           setImeiRows([]);
           setLocationRows([]);
         }
+      } finally {
+        if (!cancelled) setSummaryBusy(false);
       }
     };
     loadReports();
     return () => {
       cancelled = true;
     };
-  }, [sessions]);
-
+  }, [sessionCount]);
   const runPoi = async (event) => {
     event.preventDefault();
     if (!poi.trim()) return;
@@ -1644,7 +1637,7 @@ function ReportsPage({ sessions }) {
         <a className="text-link" href={api.sessionCsvUrl()}>Export sessions CSV</a>
       </section>
       <section className="panel span-7">
-        <PanelHeader icon={ShieldCheck} title="Report Preview" action={<Badge tone="brand">{sessions.length} rows</Badge>} />
+        <PanelHeader icon={ShieldCheck} title="Report Preview" action={<Badge tone="brand">{number(sessionCount)} rows</Badge>} />
         {busy ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '220px', gap: '12px' }}>
             <Loader2 size={28} className="animate-spin" style={{ color: 'var(--color-brand)' }} />
@@ -1660,7 +1653,7 @@ function ReportsPage({ sessions }) {
       <section className="panel span-4">
         <PanelHeader icon={Activity} title="Common Applications" action={<Badge tone="brand">{commonApps.length}</Badge>} />
         <div className="report-list">
-          {commonApps.length ? commonApps.map((item) => (
+          {summaryBusy ? <MiniLoading label="Loading application summary" /> : commonApps.length ? commonApps.map((item) => (
             <article className="report-row" key={item.name}>
               <strong>{item.name}</strong>
               <span>{item.poi_msisdns.length} PoIs | {item.destination_ips.length} IPs | {formatDuration(item.total_duration_seconds)}</span>
@@ -1671,7 +1664,7 @@ function ReportsPage({ sessions }) {
       <section className="panel span-4">
         <PanelHeader icon={Database} title="IMEI Frequency" action={<Badge tone="brand">{imeiRows.length}</Badge>} />
         <div className="report-list">
-          {imeiRows.length ? imeiRows.map((item) => (
+          {summaryBusy ? <MiniLoading label="Loading IMEI frequency" /> : imeiRows.length ? imeiRows.map((item) => (
             <article className="report-row" key={item.imei}>
               <strong className="mono">{item.imei}</strong>
               <span>{item.sessions} sessions | {item.msisdns.length} MSISDNs | {item.handset_hint ?? "TAC unavailable"}</span>
@@ -1682,7 +1675,7 @@ function ReportsPage({ sessions }) {
       <section className="panel span-4">
         <PanelHeader icon={LocateFixed} title="Location Summary" action={<Badge tone="brand">{locationRows.length}</Badge>} />
         <div className="report-list">
-          {locationRows.length ? locationRows.map((item) => (
+          {summaryBusy ? <MiniLoading label="Loading location summary" /> : locationRows.length ? locationRows.map((item) => (
             <article className="report-row" key={item.key}>
               <strong>{item.label}</strong>
               <span>{item.sessions} sessions | Day {item.day_sessions} | Night {item.night_sessions}</span>
@@ -1696,6 +1689,14 @@ function ReportsPage({ sessions }) {
         <GeoMap locationData={locationRows} />
       </section>
     </motion.section>
+  );
+}
+function MiniLoading({ label }) {
+  return (
+    <div className="mini-loading">
+      <Loader2 size={16} className="animate-spin" />
+      <span>{label}</span>
+    </div>
   );
 }
 function ReportPreview({ report }) {
@@ -2708,13 +2709,13 @@ function Button({ children, icon: Icon, variant = "primary", ...props }) {
   );
 }
 
-function SelectControl({ ariaLabel, icon: Icon, value, onChange, options }) {
+function SelectControl({ ariaLabel, icon: Icon, value, onChange, options, disabled = false }) {
   const [open, setOpen] = useState(false);
   const selected = options.find((option) => option.value === value) ?? options[0];
 
   return (
     <div
-      className={`select-control ${open ? "is-open" : ""}`}
+      className={`select-control ${open ? "is-open" : ""} ${disabled ? "is-disabled" : ""}`}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) {
           setOpen(false);
@@ -2727,7 +2728,8 @@ function SelectControl({ ariaLabel, icon: Icon, value, onChange, options }) {
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={ariaLabel}
-        onClick={() => setOpen((current) => !current)}
+        disabled={disabled}
+        onClick={() => !disabled && setOpen((current) => !current)}
       >
         {Icon ? <Icon size={16} /> : null}
         <span>{selected.label}</span>

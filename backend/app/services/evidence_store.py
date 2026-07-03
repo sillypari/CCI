@@ -292,7 +292,7 @@ class EvidenceStore:
             
             self.extractions = [ExtractionResult.model_validate(item) for item in payload.get("extractions", [])]
             
-            # Auto-resolve zombie processing jobs
+            # Auto-resolve zombie processing jobs and uploads
             zombies_found = False
             for job in self.jobs:
                 if job.status == "processing":
@@ -301,9 +301,17 @@ class EvidenceStore:
                     job.message = "Job interrupted (server restarted)"
                     job.completed_at = now_ist()
                     zombies_found = True
+            for upload in self.uploads:
+                if upload.status == "processing":
+                    upload.status = "failed"
+                    upload.progress = 100
+                    upload.message = "Upload interrupted (server restarted)"
+                    upload.completed_at = now_ist()
+                    zombies_found = True
             if zombies_found:
                 # Save changes silently
                 payload["jobs"] = [item.model_dump(mode="json") for item in self.jobs]
+                payload["uploads"] = [item.model_dump(mode="json") for item in self.uploads]
                 tmp_path = self.storage_file.with_suffix(".tmp")
                 tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
                 tmp_path.replace(self.storage_file)
@@ -1360,12 +1368,21 @@ class EvidenceStore:
         msisdn: str | None = None,
         classification: str | None = None,
         case_id: str | None = None,
-        limit: int = 5_000,
+        limit: int = 250,
+        scan_limit: int = 20_000,
+        sample_limit: int = 4,
     ) -> CommunicationGraph:
         normalized_classification = None if classification in (None, "all") else classification
-        sessions = self.list_sessions(msisdn=msisdn, classification=normalized_classification, case_id=case_id, limit=limit)
+        visible_limit = max(1, min(limit, 5_000))
+        scan_cap = max(visible_limit, min(max(scan_limit, 1), 100_000))
+        sample_cap = max(1, min(sample_limit, 10))
+        sessions = self.list_sessions(msisdn=msisdn, classification=normalized_classification, case_id=case_id, limit=scan_cap)
         nodes: dict[str, dict[str, Any]] = {}
         links: dict[str, dict[str, Any]] = {}
+
+        def append_sample(target: dict[str, Any], session: SessionRecord) -> None:
+            if len(target["sessions"]) < sample_cap:
+                target["sessions"].append(session)
 
         def add_node(node_id: str, kind: str, label: str, title: str, operator: str, session: SessionRecord) -> None:
             total_bytes = session.bytes_up + session.bytes_down
@@ -1388,7 +1405,7 @@ class EvidenceStore:
             existing["bytes"] += total_bytes
             existing["confidence"] = max(existing["confidence"], session.confidence)
             existing["last_seen"] = max(existing["last_seen"], session.started_at)
-            existing["sessions"].append(session)
+            append_sample(existing, session)
             if existing["kind"] != "source":
                 existing["kind"] = self._merge_classification(existing["kind"], kind)
             if existing["operator"] != operator:
@@ -1433,10 +1450,25 @@ class EvidenceStore:
             existing_link["duration_seconds"] += session.duration_seconds
             existing_link["confidence"] = max(existing_link["confidence"], session.confidence)
             existing_link["classification"] = self._merge_classification(existing_link["classification"], session.classification)
-            existing_link["sessions"].append(session)
+            append_sample(existing_link, session)
 
-        node_models = [GraphNode.model_validate(item) for item in nodes.values()]
-        link_models = [GraphEdge.model_validate(item) for item in links.values()]
+        classification_rank = {"p2p": 2, "unknown": 1, "relay": 0}
+        top_links = sorted(
+            links.values(),
+            key=lambda item: (item["count"], classification_rank.get(item["classification"], 0), item["bytes"], item["confidence"]),
+            reverse=True,
+        )[:visible_limit]
+        visible_node_ids = {link["source_id"] for link in top_links} | {link["target_id"] for link in top_links}
+        node_models = [GraphNode.model_validate(item) for item in nodes.values() if item["id"] in visible_node_ids]
+        link_models = [GraphEdge.model_validate(item) for item in top_links]
+        visible_sessions: list[SessionRecord] = []
+        seen_session_ids: set[str] = set()
+        for link in top_links:
+            for session in link["sessions"]:
+                if session.id in seen_session_ids:
+                    continue
+                seen_session_ids.add(session.id)
+                visible_sessions.append(session)
         seen_times = [session.started_at for session in sessions]
         metrics = GraphMetrics(
             nodes=len(node_models),
@@ -1449,8 +1481,7 @@ class EvidenceStore:
             first_seen=min(seen_times) if seen_times else None,
             last_seen=max(seen_times) if seen_times else None,
         )
-        return CommunicationGraph(nodes=node_models, links=link_models, sessions=sessions, metrics=metrics)
-
+        return CommunicationGraph(nodes=node_models, links=link_models, sessions=visible_sessions, metrics=metrics)
     def suspicious_patterns(self, limit: int = 50) -> list[SuspiciousPattern]:
         with self._lock:
             sessions = self.list_sessions(limit=20_000)
