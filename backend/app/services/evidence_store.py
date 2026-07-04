@@ -1387,6 +1387,186 @@ class EvidenceStore:
             self._save()
         return range_item
 
+    def _stable_hash(self, value) -> int:
+        text = str(value or "")
+        hash_val = 2166136261
+        for char in text:
+            hash_val ^= ord(char)
+            hash_val = (hash_val * 16777619) & 0xffffffff
+        return hash_val
+
+    def _layout_clustered_force(self, nodes, links, width=1120, height=640):
+        if not nodes:
+            return {}
+        
+        source_nodes = [n for n in nodes if n.kind == "source"]
+        source_nodes.sort(key=lambda n: (-(n.count or 0), n.id))
+        
+        destination_nodes = [n for n in nodes if n.kind != "source"]
+        destination_nodes.sort(key=lambda n: (-(n.count or 0), n.id))
+        
+        source_ids = {n.id for n in source_nodes}
+        primary_source_by_target = {}
+        
+        sorted_links = sorted(links, key=lambda l: (-(l.count or 0), l.id))
+        for link in sorted_links:
+            if link.source_id in source_ids and link.target_id not in primary_source_by_target:
+                primary_source_by_target[link.target_id] = link.source_id
+                
+        positions = {}
+        center_x = width * 0.48
+        center_y = height * 0.5
+        
+        source_radius_x = min(190.0, max(92.0, len(source_nodes) * 12.0))
+        source_radius_y = min(230.0, max(105.0, len(source_nodes) * 16.0))
+        
+        for i, node in enumerate(source_nodes):
+            if len(source_nodes) == 1:
+                positions[node.id] = {"x": center_x, "y": center_y}
+                continue
+            angle = -math.pi / 2.0 + (i / len(source_nodes)) * math.pi * 2.0
+            positions[node.id] = {
+                "x": center_x + math.cos(angle) * source_radius_x,
+                "y": center_y + math.sin(angle) * source_radius_y
+            }
+            
+        if not source_nodes:
+            for i, node in enumerate(destination_nodes):
+                ring = i // 18
+                slot = i % 18
+                slots = min(18, len(destination_nodes) - ring * 18)
+                angle = (slot / max(slots, 1)) * math.pi * 2.0 + (self._stable_hash(f"{node.id}:angle") % 10000 / 10000.0) * 0.18
+                radius = 115.0 + ring * 70.0
+                positions[node.id] = {
+                    "x": center_x + math.cos(angle) * radius,
+                    "y": center_y + math.sin(angle) * radius * 0.78
+                }
+            return positions
+            
+        groups = {source.id: [] for source in source_nodes}
+        for node in destination_nodes:
+            source_id = primary_source_by_target.get(node.id)
+            if not source_id or source_id not in groups:
+                h = self._stable_hash(node.id)
+                source_id = source_nodes[h % len(source_nodes)].id
+            groups[source_id].append(node)
+            
+        for source_index, source in enumerate(source_nodes):
+            group = groups.get(source.id, [])
+            source_point = positions.get(source.id, {"x": center_x, "y": center_y})
+            
+            if len(source_nodes) == 1:
+                source_angle = 0.0
+                arc = math.pi * 1.86
+                per_ring = 22
+            else:
+                source_angle = math.atan2(source_point["y"] - center_y, source_point["x"] - center_x)
+                arc = math.pi * 0.96
+                per_ring = 12
+                
+            for i, node in enumerate(group):
+                ring = i // per_ring
+                slot = i % per_ring
+                slots = min(per_ring, len(group) - ring * per_ring)
+                local = 0.0 if slots <= 1 else (slot / (slots - 1)) - 0.5
+                jitter = ((self._stable_hash(f"{node.id}:jitter") % 10000 / 10000.0) - 0.5) * 0.16
+                angle = source_angle + local * arc + jitter + (0.0 if len(source_nodes) == 1 else source_index * 0.018)
+                radius = (155.0 if len(source_nodes) == 1 else 110.0) + ring * (74.0 if len(source_nodes) == 1 else 58.0)
+                positions[node.id] = {
+                    "x": source_point["x"] + math.cos(angle) * radius,
+                    "y": source_point["y"] + math.sin(angle) * radius * 0.82
+                }
+                
+        return positions
+
+    def _layout_concentric(self, nodes, links, width=1120, height=640):
+        if not nodes:
+            return {}
+            
+        source_nodes = [n for n in nodes if n.kind == "source"]
+        source_nodes.sort(key=lambda n: (-(n.count or 0), n.id))
+        
+        destination_nodes = [n for n in nodes if n.kind != "source"]
+        destination_nodes.sort(key=lambda n: (-(n.count or 0), n.id))
+        
+        center_x = width * 0.5
+        center_y = height * 0.5
+        positions = {}
+        
+        if len(source_nodes) == 1:
+            positions[source_nodes[0].id] = {"x": center_x, "y": center_y}
+        else:
+            r_x = min(150.0, max(80.0, len(source_nodes) * 10.0))
+            r_y = min(150.0, max(80.0, len(source_nodes) * 10.0)) * 0.8
+            for i, node in enumerate(source_nodes):
+                angle = -math.pi / 2.0 + (i / len(source_nodes)) * math.pi * 2.0
+                positions[node.id] = {
+                    "x": center_x + math.cos(angle) * r_x,
+                    "y": center_y + math.sin(angle) * r_y
+                }
+                
+        groups = defaultdict(list)
+        for node in destination_nodes:
+            key = node.operator
+            if key in ("Multiple", "Unknown Network", "Unknown"):
+                key = str(node.kind)
+            groups[key].append(node)
+            
+        group_keys = sorted(list(groups.keys()))
+        num_groups = max(1, len(group_keys))
+        
+        for g_idx, g_key in enumerate(group_keys):
+            group_nodes = groups[g_key]
+            base_angle = (g_idx / num_groups) * math.pi * 2.0 - math.pi / 2.0
+            wedge_width = (math.pi * 1.8) / num_groups
+            
+            for i, node in enumerate(group_nodes):
+                ring = i // 8
+                slot = i % 8
+                slots = min(8, len(group_nodes) - ring * 8)
+                local = 0.0 if slots <= 1 else (slot / (slots - 1)) - 0.5
+                
+                angle = base_angle + local * wedge_width
+                radius = 210.0 + ring * 50.0
+                positions[node.id] = {
+                    "x": center_x + math.cos(angle) * radius,
+                    "y": center_y + math.sin(angle) * radius * 0.8
+                }
+                
+        return positions
+
+    def _layout_sankey(self, nodes, links, width=1120, height=640):
+        if not nodes:
+            return {}
+            
+        source_nodes = [n for n in nodes if n.kind == "source"]
+        source_nodes.sort(key=lambda n: (-(n.count or 0), n.id))
+        
+        p2p_targets = [n for n in nodes if n.kind != "source" and n.kind == "p2p"]
+        p2p_targets.sort(key=lambda n: (-(n.count or 0), n.id))
+        
+        other_targets = [n for n in nodes if n.kind != "source" and n.kind != "p2p"]
+        other_targets.sort(key=lambda n: (-(n.count or 0), n.id))
+        
+        positions = {}
+        
+        num_sources = len(source_nodes)
+        for i, node in enumerate(source_nodes):
+            y = 320.0 if num_sources <= 1 else 60.0 + i * (520.0 / (num_sources - 1))
+            positions[node.id] = {"x": 560.0, "y": y}
+            
+        num_p2p = len(p2p_targets)
+        for i, node in enumerate(p2p_targets):
+            y = 320.0 if num_p2p <= 1 else 60.0 + i * (520.0 / (num_p2p - 1))
+            positions[node.id] = {"x": 140.0, "y": y}
+            
+        num_others = len(other_targets)
+        for i, node in enumerate(other_targets):
+            y = 320.0 if num_others <= 1 else 60.0 + i * (520.0 / (num_others - 1))
+            positions[node.id] = {"x": 980.0, "y": y}
+            
+        return positions
+
     def communication_graph(
         self,
         msisdn: str | None = None,
@@ -1716,6 +1896,10 @@ class EvidenceStore:
             first_seen=min(seen_times) if seen_times else None,
             last_seen=max(seen_times) if seen_times else None,
         )
+        force_layout = self._layout_clustered_force(node_models, link_models)
+        concentric_layout = self._layout_concentric(node_models, link_models)
+        sankey_layout = self._layout_sankey(node_models, link_models)
+
         view = {
             "mode": "focused" if focus_value else "ranked_overview",
             "focus": focus_value or None,
@@ -1729,6 +1913,11 @@ class EvidenceStore:
             "started_from": started_from,
             "started_to": started_to,
             "generated_at": now_ist().isoformat(),
+            "layouts": {
+                "force": force_layout,
+                "concentric": concentric_layout,
+                "sankey": sankey_layout,
+            }
         }
         return CommunicationGraph(nodes=node_models, links=link_models, sessions=visible_sessions, metrics=metrics, clusters=clusters, insights=insights, view=view)
     def suspicious_patterns(self, limit: int = 50) -> list[SuspiciousPattern]:

@@ -15,7 +15,10 @@ import {
   Check,
   CheckCircle2,
   Code,
+  Calendar,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clipboard,
   Copy,
   Database,
@@ -46,7 +49,8 @@ import {
   Users,
   X,
   ZoomIn,
-  ZoomOut
+  ZoomOut,
+  Layers
 } from "lucide-react";
 import { api } from "./api/client.js";
 
@@ -116,6 +120,8 @@ const initialState = {
   platformRanges: [],
   timeline: [],
   applications: [],
+  imeiRows: [],
+  locationRows: [],
   persistence: null
 };
 
@@ -135,7 +141,7 @@ function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const [stats, cases, importSpecs, uploads, jobs, sessions, patterns, timeline, applications, extractions, packagesList, auditLogs, platformRanges, persistence] = await Promise.all([
+      const [stats, cases, importSpecs, uploads, jobs, sessions, patterns, timeline, applications, extractions, packagesList, auditLogs, platformRanges, persistence, imeiRows, locationRows] = await Promise.all([
         api.dashboard(),
         api.cases(),
         api.importSpecs(),
@@ -149,9 +155,11 @@ function App() {
         api.packages(),
         api.auditLogs(),
         api.platformRanges(),
-        api.persistenceStatus()
+        api.persistenceStatus(),
+        api.imeiFrequency("?limit=6"),
+        api.locationSummary("?limit=6")
       ]);
-      setData((current) => ({ ...current, stats, cases, importSpecs, uploads, jobs, sessions, patterns, timeline, applications, extractions, packages: packagesList, auditLogs, platformRanges, persistence }));
+      setData((current) => ({ ...current, stats, cases, importSpecs, uploads, jobs, sessions, patterns, timeline, applications, extractions, packages: packagesList, auditLogs, platformRanges, persistence, imeiRows, locationRows }));
       setApiLive(true);
       setApiError("");
     } catch (error) {
@@ -363,10 +371,20 @@ function Shell({ apiLive, apiError, children }) {
     }
   };
 
+  const toggleFullScreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      }
+    }
+  };
+
   return (
     <div className={`app-shell ${collapsed ? "is-collapsed" : ""} ${mobileOpen ? "mobile-open" : ""} ${location.pathname === "/map" ? "is-map-route" : ""}`}>
       <aside className="sidebar">
-        <div className="sidebar__brand">
+        <div className="sidebar__brand" onClick={() => collapsed && setCollapsed(false)} style={{ cursor: collapsed ? "pointer" : "default" }}>
           <div className="brand-lockup">
             <img className="brand-mark" src="/brand-logo.png" alt="" />
             <div className="brand-copy">
@@ -377,7 +395,10 @@ function Shell({ apiLive, apiError, children }) {
           <button
             className="sidebar__toggle icon-button"
             type="button"
-            onClick={() => setCollapsed((value) => !value)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setCollapsed((value) => !value);
+            }}
             data-tooltip={sidebarToggleLabel}
             aria-label={sidebarToggleLabel}
             aria-expanded={!collapsed}
@@ -404,20 +425,42 @@ function Shell({ apiLive, apiError, children }) {
       </aside>
       <div className="shell-main">
         <header className="topbar">
-          <button className="icon-button mobile-menu" type="button" onClick={() => setMobileOpen((value) => !value)} aria-label="Menu" data-tooltip="Menu">
-            {mobileOpen ? <X size={18} /> : <Menu size={18} />}
-          </button>
-          <div className="topbar__title">
-            <PageIcon size={18} />
-            <span>{page.label}</span>
+          <div className="topbar__left">
+            <button className="icon-button mobile-menu" type="button" onClick={() => setMobileOpen((value) => !value)} aria-label="Menu" data-tooltip="Menu">
+              {mobileOpen ? <X size={18} /> : <Menu size={18} />}
+            </button>
+            <div className="topbar__title">
+              <PageIcon size={18} />
+              <span>{page.label}</span>
+            </div>
           </div>
-          <form className="global-search" onSubmit={submitSearch}>
-            <Search size={16} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search MSISDN, IP, file" />
-          </form>
-          <div className={`system-state ${apiLive ? "healthy" : "offline"}`}>
-            <span />
-            {apiLive ? "API live" : "API offline"}
+
+          <div className="topbar__center">
+            <div className="brand-lockup">
+              <img className="brand-mark" src="/brand-logo.png" alt="" />
+              <div className="brand-copy">
+                <strong>Pramaan IPDR</strong>
+                <span>B-party intelligence</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="topbar__right">
+            {location.pathname !== "/map" && (
+              <form className="global-search" onSubmit={submitSearch}>
+                <Search size={16} />
+                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search MSISDN, IP..." />
+              </form>
+            )}
+            <div 
+              className={`system-state ${apiLive ? "healthy" : "offline"}`}
+              onDoubleClick={toggleFullScreen}
+              style={{ cursor: "pointer", userSelect: "none" }}
+              title="Double click to toggle fullscreen"
+            >
+              <span />
+              {apiLive ? "API live" : "API offline"}
+            </div>
           </div>
         </header>
         <main className="content">
@@ -430,16 +473,21 @@ function Shell({ apiLive, apiError, children }) {
 }
 
 function DashboardPage({ data }) {
-  const recentSessions = data.sessions.slice(0, 5);
-  const actionableRate = data.stats.sessions ? Math.round((data.stats.actionable / data.stats.sessions) * 100) : 0;
+  const recentSessions = (data.sessions ?? []).slice(0, 5);
+  const actionableRate = data.stats?.sessions ? Math.round((data.stats.actionable / data.stats.sessions) * 100) : 0;
   const topPatterns = (data.patterns ?? []).slice(0, 4);
+
+  const imeiRows = (data.imeiRows ?? []).slice(0, 6);
+  const locationRows = (data.locationRows ?? []).slice(0, 6);
+  const applications = (data.applications ?? []).slice(0, 6);
+
   return (
     <motion.section {...pageMotion} className="page-grid">
       <section className="case-ribbon span-12">
         <div className="case-ribbon__main">
           <span className="eyebrow">Investigation cockpit</span>
           <h1>A-party to B-party correlation</h1>
-          <p>{number(data.stats.sessions)} normalized sessions | {number(data.stats.actionable)} P2P leads | {number(data.stats.relay)} relay/noise flows</p>
+          <p>{number(data.stats?.sessions)} normalized sessions | {number(data.stats?.actionable)} P2P leads | {number(data.stats?.relay)} relay/noise flows</p>
         </div>
         <div className="case-ribbon__metric">
           <span>Actionable rate</span>
@@ -447,50 +495,90 @@ function DashboardPage({ data }) {
         </div>
         <div className="case-ribbon__metric">
           <span>Confidence</span>
-          <strong>{Math.round(data.stats.avg_confidence * 100)}%</strong>
+          <strong>{Math.round((data.stats?.avg_confidence ?? 0) * 100)}%</strong>
         </div>
       </section>
 
       <div className="dashboard-strip">
-        <StatCard icon={Upload} label="Uploads" value={data.stats.uploads} tone="brand" />
-        <StatCard icon={Database} label="Sessions" value={number(data.stats.sessions)} tone="neutral" />
-        <StatCard icon={Target} label="P2P leads" value={number(data.stats.actionable)} tone="success" />
-        <StatCard icon={Server} label="Relay/noise" value={number(data.stats.relay)} tone="danger" />
-        <StatCard icon={Gauge} label="Quarantine" value={number(data.stats.quarantined_rows)} tone="warning" />
+        <StatCard icon={Upload} label="Uploads" value={data.stats?.uploads} tone="brand" />
+        <StatCard icon={Database} label="Sessions" value={number(data.stats?.sessions)} tone="neutral" />
+        <StatCard icon={Target} label="P2P leads" value={number(data.stats?.actionable)} tone="success" />
+        <StatCard icon={Server} label="Relay/noise" value={number(data.stats?.relay)} tone="danger" />
+        <StatCard icon={Gauge} label="Quarantine" value={number(data.stats?.quarantined_rows)} tone="warning" />
       </div>
 
+      {/* Row 1: IMEI Handset Frequency & Location Hotspots */}
       <motion.section 
-        className="panel span-7"
+        className="panel span-6"
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.08, duration: 0.22 }}
       >
-        <PanelHeader icon={Activity} title="Processing Overview" action={<Badge tone="success">Healthy</Badge>} />
-        <div className="timeline">
-          {["Upload", "Detect", "Normalize", "Classify", "Extract"].map((item, index) => (
-            <div className="timeline__item" key={item}>
-              <span className="timeline__dot">{index + 1}</span>
-              <div>
-                <strong>{item}</strong>
-                <p>{index < 4 ? "Ready" : `${data.stats.actionable} candidates`}</p>
+        <PanelHeader icon={Smartphone} title="Top Active Handsets (IMEI)" action={<Badge tone="brand">{imeiRows.length}</Badge>} />
+        <div className="report-list scrollable-list">
+          {imeiRows.length ? imeiRows.map((item) => (
+            <article className="report-row" key={item.imei}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong className="mono" style={{ fontSize: '13px' }}>{item.imei}</strong>
+                <Badge tone="brand">{item.sessions} sessions</Badge>
               </div>
-            </div>
-          ))}
+              <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '2px', display: 'block' }}>
+                {item.msisdns?.length || 0} suspect lines | {item.handset_hint ?? "TAC model details unavailable"}
+              </span>
+            </article>
+          )) : <EmptyState label="No IMEI records found in active case" />}
         </div>
       </motion.section>
 
       <motion.section 
-        className="panel span-5"
+        className="panel span-6"
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.12, duration: 0.22 }}
       >
-        <PanelHeader icon={ShieldCheck} title="Latest Upload" action={<Badge tone="brand">{data.stats.latest_upload?.status ?? "none"}</Badge>} />
-        {data.stats.latest_upload ? (
-          <div className="upload-summary">
-            <strong>{data.stats.latest_upload.filename}</strong>
+        <PanelHeader icon={LocateFixed} title="Location Hotspots" action={<Badge tone="brand">{locationRows.length}</Badge>} />
+        <div className="report-list scrollable-list">
+          {locationRows.length ? locationRows.map((item) => (
+            <article className="report-row" key={item.key}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong style={{ fontSize: '13px' }}>{item.label}</strong>
+                <Badge tone="neutral">{item.sessions} sessions</Badge>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', fontSize: '11px', color: 'var(--color-text-muted)', marginTop: '4px' }}>
+                <span>Day: <strong>{item.day_sessions}</strong></span>
+                <span>•</span>
+                <span>Night: <strong>{item.night_sessions}</strong></span>
+              </div>
+            </article>
+          )) : <EmptyState label="No cell tower location records found" />}
+        </div>
+      </motion.section>
+
+      {/* Row 2: Top Apps, Latest Upload & Investigation Signals */}
+      <section className="panel span-4">
+        <PanelHeader icon={Layers} title="Top Apps & VoIP" action={<Badge tone="brand">{applications.length}</Badge>} />
+        <div className="report-list scrollable-list">
+          {applications.length ? applications.map((item) => (
+            <article className="report-row" key={item.name}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong style={{ fontSize: '13px' }}>{item.name}</strong>
+                <Badge tone="brand">{item.msisdns || 0} PoIs</Badge>
+              </div>
+              <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '2px', display: 'block' }}>
+                {item.destination_ips || 0} destination IPs | {formatDuration(item.duration_seconds || 0)}
+              </span>
+            </article>
+          )) : <EmptyState label="No VoIP application records found" />}
+        </div>
+      </section>
+
+      <section className="panel span-4">
+        <PanelHeader icon={ShieldCheck} title="Latest Upload" action={<Badge tone="brand">{data.stats?.latest_upload?.status ?? "none"}</Badge>} />
+        {data.stats?.latest_upload ? (
+          <div className="upload-summary" style={{ padding: '4px' }}>
+            <strong style={{ display: 'block', marginBottom: '8px', overflowWrap: 'break-word' }}>{data.stats.latest_upload.filename}</strong>
             <Progress value={data.stats.latest_upload.progress} />
-            <div className="metric-row">
+            <div className="metric-row" style={{ marginTop: '12px', fontSize: '11px', color: 'var(--color-text-secondary)', display: 'flex', justifyContent: 'space-between' }}>
               <span>{number(data.stats.latest_upload.rows_valid)} valid</span>
               <span>{number(data.stats.latest_upload.rows_quarantined)} quarantined</span>
               <span>{data.stats.latest_upload.format_report?.parser_engine ?? "parser"}</span>
@@ -499,16 +587,17 @@ function DashboardPage({ data }) {
         ) : (
           <EmptyState label="No uploads yet" />
         )}
-      </motion.section>
+      </section>
 
-      <section className="panel span-5">
+      <section className="panel span-4">
         <PanelHeader icon={AlertTriangle} title="Investigation Signals" action={<Badge tone={topPatterns.length ? "warning" : "success"}>{topPatterns.length}</Badge>} />
         {topPatterns.length ? <SignalList patterns={topPatterns} /> : <EmptyState label="No suspicious signals detected" />}
       </section>
 
-      <section className="panel span-7">
-        <PanelHeader icon={Database} title="Recent Sessions" action={<NavLink to="/sessions" className="text-link">View all</NavLink>} />
-        <SessionsTable sessions={recentSessions} compact />
+      {/* Row 3: Full Width Recent Sessions Table */}
+      <section className="panel span-12">
+        <PanelHeader icon={Database} title="Recent Sessions Stream" action={<NavLink to="/sessions" className="text-link">View all sessions</NavLink>} />
+        <SessionsTable sessions={recentSessions} compact={false} />
       </section>
     </motion.section>
   );
@@ -516,7 +605,7 @@ function DashboardPage({ data }) {
 
 function SignalList({ patterns }) {
   return (
-    <div className="signal-list">
+    <div className="signal-list scrollable-list">
       {patterns.map((pattern) => (
         <article className={`signal-row ${pattern.severity}`} key={pattern.id}>
           <div>
@@ -530,7 +619,7 @@ function SignalList({ patterns }) {
     </div>
   );
 }
-function CasesPage({ cases, stats, createCase, deleteCase }) {
+function CasesPage({ cases = [], stats = {}, createCase, deleteCase }) {
   const [form, setForm] = useState({ name: "", crime_type: "Cybercrime", io_name: "", targets: "", tags: "" });
 
   const submit = async (event) => {
@@ -608,7 +697,7 @@ function CasesPage({ cases, stats, createCase, deleteCase }) {
     </motion.section>
   );
 }
-function UploadsPage({ uploads, jobs = [], cases = [], importSpecs = [], uploadFile, validateFile, deleteUpload }) {
+function UploadsPage({ uploads = [], jobs = [], cases = [], importSpecs = [], uploadFile, validateFile, deleteUpload }) {
   const [activeFile, setActiveFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [selectedQuarantine, setSelectedQuarantine] = useState(null);
@@ -996,7 +1085,7 @@ function ValidationReportCard({ report }) {
     </div>
   );
 }
-function SessionsPage({ sessions }) {
+function SessionsPage({ sessions = [] }) {
   const [params] = useSearchParams();
   const [query, setQuery] = useState(params.get("q") ?? "");
   const [classification, setClassification] = useState("all");
@@ -1253,7 +1342,7 @@ function SessionsPage({ sessions }) {
   );
 }
 
-function ExtractionsPage({ extractions, runExtraction }) {
+function ExtractionsPage({ extractions = [], runExtraction }) {
   const [msisdn, setMsisdn] = useState("");
   const [depth, setDepth] = useState(1);
   const [busy, setBusy] = useState(false);
@@ -1312,6 +1401,152 @@ function ExtractionsPage({ extractions, runExtraction }) {
   );
 }
 
+function PremiumDatePicker({ value, onChange, placeholder = "Select date" }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [currentMonth, setCurrentMonth] = useState(() => {
+    const d = value ? new Date(value) : new Date();
+    return isNaN(d.getTime()) ? new Date() : d;
+  });
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const formatDate = (val) => {
+    if (!val) return "";
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  };
+
+  const handlePrevMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
+  };
+
+  const handleNextMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
+  };
+
+  const handleSelectDay = (day, isCurrentMonth = true) => {
+    let targetDate;
+    if (isCurrentMonth) {
+      targetDate = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day);
+    } else {
+      const offset = day > 15 ? -1 : 1;
+      targetDate = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + offset, day);
+    }
+    
+    const offsetTime = targetDate.getTime() - targetDate.getTimezoneOffset() * 60000;
+    const localDateString = new Date(offsetTime).toISOString().split("T")[0];
+    
+    onChange(localDateString);
+    setIsOpen(false);
+  };
+
+  const handleClear = () => {
+    onChange("");
+    setIsOpen(false);
+  };
+
+  const handleToday = () => {
+    const today = new Date();
+    const offsetTime = today.getTime() - today.getTimezoneOffset() * 60000;
+    const localDateString = new Date(offsetTime).toISOString().split("T")[0];
+    onChange(localDateString);
+    setIsOpen(false);
+  };
+
+  const year = currentMonth.getFullYear();
+  const month = currentMonth.getMonth();
+  const firstDayOfWeek = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const daysInPrevMonth = new Date(year, month, 0).getDate();
+
+  const days = [];
+  for (let i = firstDayOfWeek - 1; i >= 0; i--) {
+    days.push({ day: daysInPrevMonth - i, current: false });
+  }
+  for (let i = 1; i <= daysInMonth; i++) {
+    days.push({ day: i, current: true });
+  }
+  const remaining = 42 - days.length;
+  for (let i = 1; i <= remaining; i++) {
+    days.push({ day: i, current: false });
+  }
+
+  const isSelected = (day, isCurrent) => {
+    if (!value || !isCurrent) return false;
+    const d = new Date(value);
+    return d.getFullYear() === year && d.getMonth() === month && d.getDate() === day;
+  };
+
+  return (
+    <div className="premium-datepicker" ref={containerRef}>
+      <button
+        type="button"
+        className="premium-datepicker__trigger"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <Calendar size={16} />
+        <span>{value ? formatDate(value) : placeholder}</span>
+      </button>
+
+      {isOpen && (
+        <div className="premium-datepicker__dropdown">
+          <div className="premium-datepicker__header">
+            <button type="button" onClick={handlePrevMonth} className="premium-datepicker__nav-btn">
+              <ChevronLeft size={16} />
+            </button>
+            <span className="premium-datepicker__title">
+              {currentMonth.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+            </span>
+            <button type="button" onClick={handleNextMonth} className="premium-datepicker__nav-btn">
+              <ChevronRight size={16} />
+            </button>
+          </div>
+
+          <div className="premium-datepicker__weekdays">
+            {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map(d => (
+              <span key={d}>{d}</span>
+            ))}
+          </div>
+
+          <div className="premium-datepicker__days">
+            {days.map((item, idx) => {
+              const selected = isSelected(item.day, item.current);
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => handleSelectDay(item.day, item.current)}
+                  className={`premium-datepicker__day ${item.current ? "current" : "adjacent"} ${selected ? "selected" : ""}`}
+                >
+                  {item.day}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="premium-datepicker__footer">
+            <button type="button" onClick={handleClear} className="premium-datepicker__footer-btn">
+              Clear
+            </button>
+            <button type="button" onClick={handleToday} className="premium-datepicker__footer-btn">
+              Today
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function primarySourceMsisdnFromNode(node) {
   if (!node) return "";
   if (node.kind === "source") return node.id;
@@ -1336,6 +1571,25 @@ function MapPage({ runExtraction, sessionCount = 0 }) {
   const [minScore,      setMinScore]      = useState(0);
   const [startedFrom,   setStartedFrom]   = useState("");
   const [startedTo,     setStartedTo]     = useState("");
+  const [layoutMode,    setLayoutMode]    = useState("force"); // "force" | "concentric" | "sankey" | "matrix"
+  
+  const handleFocusChange = (val) => {
+    setFocus(val);
+    const clean = val.trim();
+    if (!clean) {
+      setFocusType("any");
+      return;
+    }
+    if (clean.includes(".") || clean.includes(":")) {
+      setFocusType("ip");
+    } else if (/^\d{15}$/.test(clean)) {
+      setFocusType("imei");
+    } else if (/^\d{10}$/.test(clean) || /^\d{14}$/.test(clean)) {
+      setFocusType("msisdn");
+    } else {
+      setFocusType("any");
+    }
+  };
   // ── Graph state ──────────────────────────────────────────────
   const [selected,  setSelected]  = useState(null);
   const [graphData, setGraphData] = useState(() => emptyGraphData);
@@ -1448,53 +1702,50 @@ function MapPage({ runExtraction, sessionCount = 0 }) {
             <div className="map-actions">
               <Badge tone={graphBusy ? "warning" : sessionCount ? "brand" : "neutral"}>{graphStatus}</Badge>
 
-              {/* Focus entity */}
-              <label className="map-query">
+              {/* 1. Target & Timeframe Scope */}
+              <label className="map-query" title="Search focus phone number, IP or IMEI">
                 <Search size={16} />
                 <input
                   aria-label="Focus entity"
                   value={focus}
-                  onChange={e => setFocus(e.target.value)}
+                  onChange={e => handleFocusChange(e.target.value)}
                   placeholder="MSISDN / IP / IMEI…"
                 />
               </label>
-              <SelectControl ariaLabel="Focus type"        value={focusType}      onChange={setFocusType}      options={focusTypeOptions}  />
-              <SelectControl ariaLabel="Rank by"           value={rankBy}         onChange={setRankBy}         options={rankByOptions}      />
-              <SelectControl ariaLabel="Flow limit"        value={graphLimit}     onChange={setGraphLimit}     options={graphLimitOptions}  />
-              <SelectControl ariaLabel="Classification"    value={classification} onChange={setClassification} options={[
-                { value: "all",     label: "All flows"  },
-                { value: "p2p",     label: "P2P only"   },
-                { value: "relay",   label: "Relay only" },
-                { value: "unknown", label: "Unknown"    },
-              ]} />
 
-              {/* Hops toggle */}
-              <label className="map-toggle" title="Expand 2-hop neighborhood">
-                <input type="checkbox" checked={hops === 2} onChange={e => setHops(e.target.checked ? 2 : 1)} />
-                2-hop
-              </label>
-              {/* Relay toggle */}
-              <label className="map-toggle" title="Hide relay/noise traffic">
-                <input type="checkbox" checked={!includeRelay} onChange={e => setIncludeRelay(!e.target.checked)} />
-                Hide relay
-              </label>
+              <PremiumDatePicker value={startedFrom} onChange={setStartedFrom} placeholder="Start date" />
+              <span style={{ fontSize: 11, color: "var(--color-text-muted)", margin: "0 2px" }}>→</span>
+              <PremiumDatePicker value={startedTo} onChange={setStartedTo} placeholder="End date" />
 
-              {/* Score floor */}
+              {/* 2. Flow Quality Filters & Thresholds */}
               <label className="map-score-filter" title="Minimum investigation score (0 = show all)">
                 <span>Score ≥ {Math.round(minScore * 100)}%</span>
                 <input type="range" min={0} max={0.9} step={0.05} value={minScore} onChange={e => setMinScore(parseFloat(e.target.value))} />
               </label>
 
-              {/* Time range */}
-              <label className="map-date" title="Filter sessions from date">
-                <input type="date" value={startedFrom} onChange={e => setStartedFrom(e.target.value)} />
-              </label>
-              <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>→</span>
-              <label className="map-date" title="Filter sessions to date">
-                <input type="date" value={startedTo} onChange={e => setStartedTo(e.target.value)} />
+              <SelectControl ariaLabel="Classification"    value={classification} onChange={setClassification} options={[
+                { value: "all",     label: "All flows"  },
+                { value: "p2p",     label: "P2P only (Leads)" },
+                { value: "relay",   label: "Relay only (Infra)" },
+                { value: "unknown", label: "Unknown classification" },
+              ]} />
+
+              <label className="map-toggle" title="Expand 2-hop neighborhood">
+                <input type="checkbox" checked={hops === 2} onChange={e => setHops(e.target.checked ? 2 : 1)} />
+                2-hop
               </label>
 
-              {/* Exports + Extract */}
+              {/* 3. Visual Arrangement Controls */}
+              <SelectControl ariaLabel="Flow limit"        value={graphLimit}     onChange={setGraphLimit}     options={graphLimitOptions}  />
+              <SelectControl ariaLabel="Rank by"           value={rankBy}         onChange={setRankBy}         options={rankByOptions}      />
+              <SelectControl ariaLabel="Layout mode"       value={layoutMode}     onChange={setLayoutMode}     options={[
+                { value: "force",      label: "Force Clustered" },
+                { value: "concentric", label: "Concentric Radial" },
+                { value: "sankey",     label: "Sankey Flow" },
+                { value: "matrix",     label: "Adjacency Matrix" },
+              ]} />
+
+              {/* 4. Forensic Exports & Action */}
               <a className="button secondary button-link" href={api.graphJsonUrl(exportQuery)} download><Download size={16} /><span>JSON</span></a>
               <a className="button secondary button-link" href={api.graphGraphmlUrl(exportQuery)} download><Network size={16} /><span>GraphML</span></a>
               <Button type="button" icon={Target} disabled={!extractionMsisdn} onClick={() => handleRunExtraction()}>Extract</Button>
@@ -1545,27 +1796,36 @@ function MapPage({ runExtraction, sessionCount = 0 }) {
               <span>Scoring edges, clustering nodes, and suppressing relay noise.</span>
             </div>
           ) : null}
-          <NetworkGraph
-            graphData={graphData}
-            selected={selected}
-            onSelect={setSelected}
-            onExtract={handleRunExtraction}
-            onFocusSource={focusAparty}
-          />
+          {layoutMode === "matrix" ? (
+            <GraphMatrixView
+              graphData={graphData}
+              selected={selected}
+              onSelect={setSelected}
+            />
+          ) : (
+            <NetworkGraph
+              graphData={graphData}
+              selected={selected}
+              onSelect={setSelected}
+              onExtract={handleRunExtraction}
+              onFocusSource={focusAparty}
+              layoutMode={layoutMode}
+            />
+          )}
         </div>
       </section>
     </motion.section>
   );
 }
-function AnalyticsPage({ timeline, applications, patterns }) {
+function AnalyticsPage({ timeline = [], applications = [], patterns = [] }) {
   const [bucket, setBucket] = useState("hour");
-  const [points, setPoints] = useState(timeline);
+  const [points, setPoints] = useState(timeline ?? []);
   const [busy, setBusy] = useState(false);
 
   // Sync points with parent timeline when it changes (only for default hour bucket)
   useEffect(() => {
     if (bucket === "hour") {
-      setPoints(timeline);
+      setPoints(timeline ?? []);
     }
   }, [timeline, bucket]);
 
@@ -1578,9 +1838,9 @@ function AnalyticsPage({ timeline, applications, patterns }) {
       setBusy(true);
       try {
         const payload = await api.timeline(`?bucket=${bucket}`);
-        if (!cancelled) setPoints(payload);
+        if (!cancelled) setPoints(payload ?? []);
       } catch {
-        if (!cancelled) setPoints(timeline);
+        if (!cancelled) setPoints(timeline ?? []);
       } finally {
         if (!cancelled) setBusy(false);
       }
@@ -1866,7 +2126,7 @@ function ReportPreview({ report }) {
     </div>
   );
 }
-function PackagesPage({ packagesList }) {
+function PackagesPage({ packagesList = [] }) {
   const [selectedId, setSelectedId] = useState(packagesList[0]?.id);
   const selected = packagesList.find((item) => item.id === selectedId) ?? packagesList[0];
 
@@ -1929,7 +2189,7 @@ function PackagesPage({ packagesList }) {
     </motion.section>
   );
 }
-function AuditPage({ auditLogs }) {
+function AuditPage({ auditLogs = [] }) {
   return (
     <motion.section {...pageMotion} className="page-grid">
       <section className="panel span-12">
@@ -1963,7 +2223,7 @@ function AuditPage({ auditLogs }) {
   );
 }
 
-function SettingsPage({ ranges, stats, apiLive, persistence, importSpecs = [], createImportSpec, createPersistenceSnapshot, resetPersistence }) {
+function SettingsPage({ ranges = [], stats = {}, apiLive, persistence, importSpecs = [], createImportSpec, createPersistenceSnapshot, resetPersistence }) {
   const [tab, setTab] = useState("ranges");
   return (
     <motion.section {...pageMotion} className="page-grid">
@@ -2079,7 +2339,8 @@ function normalizeGraphResponse(payload) {
       sessions: link.sessions ?? []
     })),
     sessions: graph.sessions ?? [],
-    metrics: { ...emptyGraphData.metrics, ...(graph.metrics ?? {}) }
+    metrics: { ...emptyGraphData.metrics, ...(graph.metrics ?? {}) },
+    view: graph.view ?? {}
   };
 }
 function stableGraphHash(value) {
@@ -2279,17 +2540,395 @@ function layoutCommunicationGraph(nodes, links, width, height) {
   const fittedPositions = fitGraphPositions(new Map(simNodes.map((node) => [node.id, { x: node.x, y: node.y }])), width, height, forceDense ? 72 : 92, forceDense ? 1.68 : 1.18);
   return forceDense ? stretchGraphPositionsX(fittedPositions, width) : fittedPositions;
 }
-function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource }) {
+function drawRoundedRect(ctx, x, y, width, height, radius) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+}
+
+function drawPhoneIcon(ctx, cx, cy, size) {
+  ctx.save();
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1.8;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  
+  ctx.translate(cx, cy);
+  ctx.scale(size / 24, size / 24);
+  ctx.translate(-12, -12);
+  
+  // Smartphone rect
+  ctx.beginPath();
+  drawRoundedRect(ctx, 5, 2, 14, 20, 2);
+  ctx.stroke();
+  
+  // Home button dot
+  ctx.beginPath();
+  ctx.arc(12, 18, 0.5, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+  ctx.stroke();
+  
+  ctx.restore();
+}
+
+function drawServerIcon(ctx, cx, cy, size) {
+  ctx.save();
+  const color = "#2f9e44";
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.6;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  
+  ctx.translate(cx, cy);
+  ctx.scale(size / 24, size / 24);
+  ctx.translate(-12, -12);
+  
+  // Server rack 1
+  ctx.beginPath();
+  drawRoundedRect(ctx, 2, 2, 20, 8, 2);
+  ctx.stroke();
+  
+  // Server rack 2
+  ctx.beginPath();
+  drawRoundedRect(ctx, 2, 14, 20, 8, 2);
+  ctx.stroke();
+  
+  // Status indicator lights
+  ctx.beginPath();
+  ctx.arc(6, 6, 0.6, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.stroke();
+  
+  ctx.beginPath();
+  ctx.arc(6, 18, 0.6, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.stroke();
+  
+  ctx.restore();
+}
+
+function drawTowerIcon(ctx, cx, cy, size) {
+  ctx.save();
+  const color = "#e03131";
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.8;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  
+  ctx.translate(cx, cy);
+  ctx.scale(size / 24, size / 24);
+  ctx.translate(-12, -12);
+  
+  // Outer left arc
+  ctx.beginPath();
+  ctx.arc(12, 12, 10, Math.PI * 0.75, Math.PI * 1.25);
+  ctx.stroke();
+  
+  // Inner left arc
+  ctx.beginPath();
+  ctx.arc(12, 12, 6, Math.PI * 0.75, Math.PI * 1.25);
+  ctx.stroke();
+  
+  // Center transmitter
+  ctx.beginPath();
+  ctx.arc(12, 12, 2, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.stroke();
+  
+  // Inner right arc
+  ctx.beginPath();
+  ctx.arc(12, 12, 6, -Math.PI * 0.25, Math.PI * 0.25);
+  ctx.stroke();
+  
+  // Outer right arc
+  ctx.beginPath();
+  ctx.arc(12, 12, 10, -Math.PI * 0.25, Math.PI * 0.25);
+  ctx.stroke();
+  
+  ctx.restore();
+}
+
+function drawShieldWarningBadge(ctx, x, y, size) {
+  ctx.save();
+  const color = "#e03131";
+  ctx.fillStyle = color;
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  
+  ctx.translate(x, y);
+  ctx.scale(size / 24, size / 24);
+  ctx.translate(-12, -12);
+  
+  // Shield Alert Path
+  ctx.beginPath();
+  const shield = new Path2D("M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z");
+  ctx.fill(shield);
+  ctx.stroke(shield);
+  
+  // Exclamation mark
+  ctx.beginPath();
+  const alertMark = new Path2D("M12 8v4 M12 16h.01");
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 2.2;
+  ctx.stroke(alertMark);
+  
+  ctx.restore();
+}
+
+function distToSegment(p, v, w) {
+  const l2 = (v.x - w.x) ** 2 + (v.y - w.y) ** 2;
+  if (l2 === 0) return Math.sqrt((p.x - v.x) ** 2 + (p.y - v.y) ** 2);
+  let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.sqrt((p.x - (v.x + t * (w.x - v.x))) ** 2 + (p.y - (v.y + t * (w.y - v.y))) ** 2);
+}
+
+function GraphMatrixView({ graphData, selected, onSelect }) {
+  const canvasRef = useRef(null);
+  const containerRef = useRef(null);
+  const [hoveredCell, setHoveredCell] = useState(null);
+
+  const sources = useMemo(() => {
+    return (graphData.nodes ?? []).filter(n => n.kind === "source")
+      .sort((a, b) => (b.count ?? 0) - (a.count ?? 0) || a.id.localeCompare(b.id));
+  }, [graphData.nodes]);
+
+  const endpoints = useMemo(() => {
+    return (graphData.nodes ?? []).filter(n => n.kind !== "source")
+      .sort((a, b) => (b.count ?? 0) - (a.count ?? 0) || a.id.localeCompare(b.id));
+  }, [graphData.nodes]);
+
+  const linkMap = useMemo(() => {
+    const map = new Map();
+    (graphData.links ?? []).forEach(link => {
+      const srcId = link.sourceId ?? link.source_id;
+      const tgtId = link.targetId ?? link.target_id;
+      map.set(`${srcId}__${tgtId}`, link);
+    });
+    return map;
+  }, [graphData.links]);
+
+  const ROW_HEADER_WIDTH = 130;
+  const COL_HEADER_HEIGHT = 130;
+  const CELL_SIZE = 26;
+
+  const width = ROW_HEADER_WIDTH + endpoints.length * CELL_SIZE;
+  const height = COL_HEADER_HEIGHT + sources.length * CELL_SIZE;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    ctx.scale(dpr, dpr);
+
+    ctx.clearRect(0, 0, width, height);
+
+    ctx.strokeStyle = "#e9ecef";
+    ctx.lineWidth = 0.5;
+    for (let i = 0; i <= sources.length; i++) {
+      const y = COL_HEADER_HEIGHT + i * CELL_SIZE;
+      ctx.beginPath();
+      ctx.moveTo(ROW_HEADER_WIDTH, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+    }
+    for (let j = 0; j <= endpoints.length; j++) {
+      const x = ROW_HEADER_WIDTH + j * CELL_SIZE;
+      ctx.beginPath();
+      ctx.moveTo(x, COL_HEADER_HEIGHT);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+    }
+
+    ctx.save();
+    ctx.font = "bold 10px var(--font-mono, monospace)";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    endpoints.forEach((ep, idx) => {
+      const x = ROW_HEADER_WIDTH + idx * CELL_SIZE + CELL_SIZE / 2;
+      const y = COL_HEADER_HEIGHT - 6;
+
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(-Math.PI / 2);
+      
+      ctx.fillStyle = ep.kind === "p2p" ? "#2b8a3e" : ep.kind === "relay" ? "#c92a2a" : "#495057";
+      ctx.fillText(ep.title || ep.label, 0, 0);
+      ctx.restore();
+    });
+    ctx.restore();
+
+    ctx.save();
+    ctx.font = "bold 11px var(--font-mono, monospace)";
+    ctx.fillStyle = "#1c7ed6";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    sources.forEach((src, idx) => {
+      const x = ROW_HEADER_WIDTH - 8;
+      const y = COL_HEADER_HEIGHT + idx * CELL_SIZE + CELL_SIZE / 2;
+      ctx.fillText(src.id.slice(-6) + "...", x, y);
+    });
+    ctx.restore();
+
+    sources.forEach((src, sIdx) => {
+      endpoints.forEach((ep, eIdx) => {
+        const link = linkMap.get(`${src.id}__${ep.id}`);
+        if (!link) return;
+
+        const x = ROW_HEADER_WIDTH + eIdx * CELL_SIZE;
+        const y = COL_HEADER_HEIGHT + sIdx * CELL_SIZE;
+
+        const countVal = link.count || 1;
+        const opacity = 0.35 + 0.65 * Math.min(Math.log1p(countVal) / Math.log1p(42), 1);
+        
+        ctx.save();
+        ctx.fillStyle = link.classification === "p2p" 
+          ? `rgba(47, 158, 68, ${opacity})` 
+          : link.classification === "relay" 
+            ? `rgba(224, 49, 49, ${opacity})` 
+            : `rgba(134, 142, 150, ${opacity})`;
+            
+        ctx.beginPath();
+        drawRoundedRect(ctx, x + 2.5, y + 2.5, CELL_SIZE - 5, CELL_SIZE - 5, 3.5);
+        ctx.fill();
+
+        const isSelected = selected?.type === "edge" && (selected.link?.id === link.id);
+        const isHovered = hoveredCell && hoveredCell.rowIdx === sIdx && hoveredCell.colIdx === eIdx;
+        
+        if (isSelected) {
+          ctx.strokeStyle = "#121f2b";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        } else if (isHovered) {
+          ctx.strokeStyle = "#495057";
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+        }
+        ctx.restore();
+      });
+    });
+
+  }, [sources, endpoints, linkMap, width, height, selected, hoveredCell]);
+
+  const handleMouseMove = (event) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+
+    if (x < ROW_HEADER_WIDTH || y < COL_HEADER_HEIGHT) {
+      setHoveredCell(null);
+      return;
+    }
+
+    const colIdx = Math.floor((x - ROW_HEADER_WIDTH) / CELL_SIZE);
+    const rowIdx = Math.floor((y - COL_HEADER_HEIGHT) / CELL_SIZE);
+
+    if (rowIdx >= 0 && rowIdx < sources.length && colIdx >= 0 && colIdx < endpoints.length) {
+      const src = sources[rowIdx];
+      const ep = endpoints[colIdx];
+      const link = linkMap.get(`${src.id}__${ep.id}`);
+      if (link) {
+        setHoveredCell({
+          rowIdx,
+          colIdx,
+          link,
+          src,
+          ep,
+          x: event.clientX - rect.left + containerRef.current.offsetLeft,
+          y: event.clientY - rect.top + containerRef.current.offsetTop - 140
+        });
+        return;
+      }
+    }
+    setHoveredCell(null);
+  };
+
+  const handleMouseLeave = () => {
+    setHoveredCell(null);
+  };
+
+  const handleClick = () => {
+    if (hoveredCell?.link) {
+      onSelect({ type: "edge", link: hoveredCell.link });
+    }
+  };
+
+  return (
+    <div ref={containerRef} className="matrix-wrapper" style={{ position: "relative", width: "100%", height: "520px", overflow: "auto" }}>
+      <canvas
+        ref={canvasRef}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+        onClick={handleClick}
+        style={{ display: "block", background: "#f8f9fa", cursor: hoveredCell ? "pointer" : "default" }}
+      />
+      {hoveredCell && (
+        <div
+          className="matrix-tooltip"
+          style={{
+            position: "absolute",
+            left: `${hoveredCell.x + 12}px`,
+            top: `${hoveredCell.y + 12}px`,
+            zIndex: 1000,
+            background: "rgba(18, 31, 43, 0.96)",
+            color: "#ffffff",
+            padding: "8px 12px",
+            borderRadius: "6px",
+            fontSize: "11px",
+            pointerEvents: "none",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.18)",
+            lineHeight: "1.4"
+          }}
+        >
+          <div style={{ fontWeight: "bold", borderBottom: "1px solid rgba(255,255,255,0.2)", paddingBottom: "3px", marginBottom: "4px" }}>
+            Connection Lead
+          </div>
+          <div><strong>A-party:</strong> {hoveredCell.src.id}</div>
+          <div><strong>B-party IP:</strong> {hoveredCell.ep.id}</div>
+          <div><strong>Operator:</strong> {hoveredCell.ep.operator}</div>
+          <div><strong>Classification:</strong> <span style={{ textTransform: "capitalize", color: hoveredCell.link.classification === "p2p" ? "#40c057" : "#fa5252" }}>{hoveredCell.link.classification}</span></div>
+          <div><strong>Sessions:</strong> {hoveredCell.link.count}</div>
+          <div><strong>Duration:</strong> {formatDuration(hoveredCell.link.duration_seconds || hoveredCell.link.duration || 0)}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource, layoutMode }) {
   const VIEW_WIDTH = 1120;
   const VIEW_HEIGHT = 640;
-  const svgRef = useRef(null);
-  const canvasRef = useRef(null);
-  const dragRef = useRef(null);
+  const realCanvasRef = useRef(null);
+  const containerRef = useRef(null);
   const pointersRef = useRef(new Map());
   const gestureRef = useRef(null);
+  const dragRef = useRef(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [manualPositions, setManualPositions] = useState({});
+  const [hoveredNodeId, setHoveredNodeId] = useState(null);
 
   const graph = useMemo(() => {
     const sourceGraph = graphData ?? emptyGraphData;
@@ -2314,6 +2953,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource 
       }
     };
   }, [graphData]);
+
   useEffect(() => {
     setManualPositions({});
     setPan({ x: 0, y: 0 });
@@ -2323,15 +2963,43 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource 
 
   const positions = useMemo(() => {
     const map = new Map();
+    const layouts = graphData?.view?.layouts ?? {};
+    const currentLayout = layouts[layoutMode] ?? {};
+    
+    let sumX = 0, sumY = 0, count = 0;
     graph.nodes.forEach((node) => {
-      map.set(node.id, manualPositions[node.id] ?? { x: node.x, y: node.y });
+      const pos = manualPositions[node.id] ?? currentLayout[node.id] ?? { x: node.x, y: node.y };
+      sumX += pos.x;
+      sumY += pos.y;
+      count++;
+    });
+    
+    const centerX = count > 0 ? sumX / count : VIEW_WIDTH / 2;
+    const centerY = count > 0 ? sumY / count : VIEW_HEIGHT / 2;
+    
+    // Spread factor increases as zoom increases above 1.0
+    // Nodes move further apart dynamically as you zoom in, spreading out clusters.
+    const spreadFactor = zoom > 1 ? 1.0 + (zoom - 1.0) * 0.45 : 1.0;
+    
+    graph.nodes.forEach((node) => {
+      const basePos = manualPositions[node.id] ?? currentLayout[node.id] ?? { x: node.x, y: node.y };
+      if (manualPositions[node.id]) {
+        map.set(node.id, basePos);
+      } else {
+        map.set(node.id, {
+          x: centerX + (basePos.x - centerX) * spreadFactor,
+          y: centerY + (basePos.y - centerY) * spreadFactor
+        });
+      }
     });
     return map;
-  }, [graph.nodes, manualPositions]);
+  }, [graph.nodes, manualPositions, graphData, layoutMode, zoom]);
 
   const getRawPointFromClient = useCallback((clientX, clientY) => {
-    const rect = svgRef.current?.getBoundingClientRect();
-    if (!rect?.width || !rect?.height) return { x: VIEW_WIDTH / 2, y: VIEW_HEIGHT / 2 };
+    const canvas = realCanvasRef.current;
+    if (!canvas) return { x: VIEW_WIDTH / 2, y: VIEW_HEIGHT / 2 };
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return { x: VIEW_WIDTH / 2, y: VIEW_HEIGHT / 2 };
     return {
       x: ((clientX - rect.left) / rect.width) * VIEW_WIDTH,
       y: ((clientY - rect.top) / rect.height) * VIEW_HEIGHT
@@ -2357,9 +3025,9 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource 
     event.preventDefault();
     pointersRef.current.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
     try {
-      svgRef.current?.setPointerCapture?.(event.pointerId);
+      realCanvasRef.current?.setPointerCapture?.(event.pointerId);
     } catch {
-      // Pointer capture can fail when the browser has already cancelled the gesture.
+      // capture can fail
     }
   };
 
@@ -2414,7 +3082,6 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource 
   };
 
   const beginNodeDrag = (event, node) => {
-    event.stopPropagation();
     rememberPointer(event);
     if (pointersRef.current.size > 1) {
       beginPinch();
@@ -2426,7 +3093,59 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource 
     onSelect({ type: "node", node });
   };
 
-  const handlePointerMove = (event) => {
+  const handleCanvasPointerDown = (event) => {
+    const point = toGraphPoint(event);
+    
+    let clickedNode = null;
+    for (let i = graph.nodes.length - 1; i >= 0; i--) {
+      const node = graph.nodes[i];
+      const radius = denseGraph ? (node.kind === "source" ? 18 : 12) : node.kind === "source" ? 34 : 25;
+      const drawRadius = radius / zoom;
+      const pos = positions.get(node.id) ?? node;
+      
+      if (node.kind === "source") {
+        const charCount = String(node.label).length;
+        const w = Math.max(drawRadius * 1.35, (charCount * 7.4) / zoom);
+        const h = drawRadius * 1.95;
+        if (Math.abs(point.x - pos.x) <= w / 2 && Math.abs(point.y - pos.y) <= h / 2) {
+          clickedNode = node;
+          break;
+        }
+      } else {
+        const dx = point.x - pos.x;
+        const dy = point.y - pos.y;
+        if (dx * dx + dy * dy <= drawRadius * drawRadius) {
+          clickedNode = node;
+          break;
+        }
+      }
+    }
+
+    if (clickedNode) {
+      beginNodeDrag(event, clickedNode);
+    } else {
+      let clickedLink = null;
+      for (const link of graph.links) {
+        const source = positions.get(link.sourceId ?? link.source_id);
+        const target = positions.get(link.targetId ?? link.target_id);
+        if (!source || !target) continue;
+        
+        const dist = distToSegment(point, source, target);
+        if (dist <= 8) {
+          clickedLink = link;
+          break;
+        }
+      }
+      
+      if (clickedLink) {
+        onSelect({ type: "edge", link: clickedLink });
+      } else {
+        beginPan(event);
+      }
+    }
+  };
+
+  const handleCanvasPointerMove = (event) => {
     if (pointersRef.current.has(event.pointerId)) {
       event.preventDefault();
       pointersRef.current.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
@@ -2435,39 +3154,64 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource 
       updatePinch();
       return;
     }
-    if (!dragRef.current) return;
+    
     const point = toGraphPoint(event);
-    const drag = dragRef.current;
-    if (drag.type === "node") {
-      setManualPositions((current) => ({
-        ...current,
-        [drag.nodeId]: { x: point.x - drag.offsetX, y: point.y - drag.offsetY }
-      }));
-      return;
+    
+    if (dragRef.current) {
+      const drag = dragRef.current;
+      if (drag.type === "node") {
+        setManualPositions((current) => ({
+          ...current,
+          [drag.nodeId]: { x: point.x - drag.offsetX, y: point.y - drag.offsetY }
+        }));
+        return;
+      }
+      if (drag.type === "pan") {
+        setPan({
+          x: drag.startPan.x + point.rawX - drag.startX,
+          y: drag.startPan.y + point.rawY - drag.startY
+        });
+        return;
+      }
     }
-    if (drag.type === "pan") {
-      setPan({
-        x: drag.startPan.x + point.rawX - drag.startX,
-        y: drag.startPan.y + point.rawY - drag.startY
-      });
+
+    let hoverNode = null;
+    for (let i = graph.nodes.length - 1; i >= 0; i--) {
+      const node = graph.nodes[i];
+      const radius = denseGraph ? (node.kind === "source" ? 18 : 12) : node.kind === "source" ? 34 : 25;
+      const drawRadius = radius / zoom;
+      const pos = positions.get(node.id) ?? node;
+      
+      if (node.kind === "source") {
+        const charCount = String(node.label).length;
+        const w = Math.max(drawRadius * 1.35, (charCount * 7.4) / zoom);
+        const h = drawRadius * 1.95;
+        if (Math.abs(point.x - pos.x) <= w / 2 && Math.abs(point.y - pos.y) <= h / 2) {
+          hoverNode = node;
+          break;
+        }
+      } else {
+        const dx = point.x - pos.x;
+        const dy = point.y - pos.y;
+        if (dx * dx + dy * dy <= drawRadius * drawRadius) {
+          hoverNode = node;
+          break;
+        }
+      }
     }
+    
+    setHoveredNodeId(hoverNode?.id ?? null);
   };
 
   const endPointer = (event) => {
     pointersRef.current.delete(event.pointerId);
     try {
-      svgRef.current?.releasePointerCapture?.(event.pointerId);
+      realCanvasRef.current?.releasePointerCapture?.(event.pointerId);
     } catch {
-      // Ignore cancelled pointer captures.
+      // capture can fail
     }
     if (pointersRef.current.size < 2) gestureRef.current = null;
     if (pointersRef.current.size === 0 || dragRef.current?.type === "pinch") dragRef.current = null;
-  };
-
-  const clearDrag = () => {
-    pointersRef.current.clear();
-    gestureRef.current = null;
-    dragRef.current = null;
   };
 
   const zoomBy = (delta) => {
@@ -2476,7 +3220,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource 
   };
 
   useEffect(() => {
-    const target = canvasRef.current;
+    const target = realCanvasRef.current;
     if (!target) return undefined;
     const handleWheel = (event) => {
       event.preventDefault();
@@ -2489,7 +3233,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource 
   }, [getRawPointFromClient, zoom, zoomToPoint]);
 
   useEffect(() => {
-    const target = canvasRef.current;
+    const target = realCanvasRef.current;
     if (!target) return undefined;
     const stopBrowserGesture = (event) => event.preventDefault();
     target.addEventListener("gesturestart", stopBrowserGesture, { passive: false });
@@ -2529,6 +3273,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource 
   const selectedEdge = selected?.type === "edge" ? selected.link : null;
   const denseGraph = graph.nodes.length > 80 || graph.links.length > 80;
   const showLinkLabels = graph.links.length <= 42;
+  
   const graphInsights = useMemo(() => {
     const byCount = (a, b) => (b.count ?? 0) - (a.count ?? 0) || a.id.localeCompare(b.id);
     const sources = graph.nodes.filter((node) => node.kind === "source").sort(byCount).slice(0, 6);
@@ -2536,6 +3281,236 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource 
     const relayLinks = graph.links.filter((link) => link.classification === "relay").sort(byCount).slice(0, 4);
     return { sources, endpoints, relayLinks };
   }, [graph.links, graph.nodes]);
+
+  useEffect(() => {
+    const canvas = realCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = VIEW_WIDTH * dpr;
+    canvas.height = VIEW_HEIGHT * dpr;
+    canvas.style.width = `${VIEW_WIDTH}px`;
+    canvas.style.height = `${VIEW_HEIGHT}px`;
+    ctx.scale(dpr, dpr);
+
+    ctx.clearRect(0, 0, VIEW_WIDTH, VIEW_HEIGHT);
+
+    ctx.save();
+    ctx.translate(pan.x, pan.y);
+    ctx.scale(zoom, zoom);
+
+    graph.links.forEach((link) => {
+      const source = positions.get(link.sourceId ?? link.source_id);
+      const target = positions.get(link.targetId ?? link.target_id);
+      if (!source || !target) return;
+
+      const isSelected = selectedEdge?.id === link.id;
+      
+      ctx.save();
+      
+      let strokeColor = "#1c7ed6";
+      if (link.classification === "p2p") strokeColor = "#2b8a3e";
+      else if (link.classification === "relay") strokeColor = "#e03131";
+      else if (link.classification === "unknown") strokeColor = "#8b949e";
+      
+      ctx.strokeStyle = strokeColor;
+      ctx.lineCap = "round";
+      
+      let opacity = denseGraph ? 0.45 : 0.72;
+      if (isSelected) opacity = 1.0;
+      ctx.globalAlpha = opacity;
+      
+      let linkWidth = denseGraph ? 1.3 + Math.min(Math.log1p(link.count || 1) * 0.38, 2.1) : 2 + Math.min(link.count, 4);
+      if (isSelected) linkWidth = 5;
+      ctx.lineWidth = linkWidth / zoom;
+
+      ctx.beginPath();
+      if (layoutMode === "sankey") {
+        ctx.moveTo(source.x, source.y);
+        ctx.bezierCurveTo(source.x + (target.x - source.x) / 2, source.y, source.x + (target.x - source.x) / 2, target.y, target.x, target.y);
+      } else {
+        ctx.moveTo(source.x, source.y);
+        ctx.lineTo(target.x, target.y);
+      }
+      
+      if (link.classification === "relay") {
+        ctx.setLineDash([5 / zoom, 4 / zoom]);
+      }
+      
+      ctx.stroke();
+      ctx.restore();
+
+      if (showLinkLabels && zoom > 0.65) {
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.scale(dpr, dpr);
+
+        ctx.font = "bold 9px var(--font-mono, monospace)";
+        ctx.fillStyle = "#516070";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        
+        const midX = (source.x + target.x) / 2;
+        const midY = (source.y + target.y) / 2;
+        const screenMidX = midX * zoom + pan.x;
+        const screenMidY = midY * zoom + pan.y;
+
+        ctx.fillText(`${link.count} session${link.count === 1 ? "" : "s"}`, screenMidX, screenMidY - 8);
+        ctx.restore();
+      }
+    });
+
+    graph.nodes.forEach((node) => {
+      const pos = positions.get(node.id) ?? node;
+      const isSelected = selectedNode?.id === node.id;
+      const isHovered = hoveredNodeId === node.id;
+      const baseRadius = denseGraph ? (node.kind === "source" ? 18 : 12) : node.kind === "source" ? 34 : 25;
+
+      const drawRadius = baseRadius / zoom;
+
+      let fillStyle = "#ffffff";
+      let strokeStyle = "#9aa8b5";
+      
+      if (node.kind === "source") {
+        fillStyle = "#1c7ed6";
+        strokeStyle = "#121f2b";
+      } else if (node.kind === "p2p") {
+        fillStyle = "#f3fbf4";
+        strokeStyle = "#2f9e44";
+      } else if (node.kind === "relay") {
+        fillStyle = "#fff6f6";
+        strokeStyle = "#e03131";
+      } else if (node.kind === "unknown") {
+        fillStyle = "#f5f7fa";
+        strokeStyle = "#8b949e";
+      }
+
+      let strokeWidth = 2.5;
+      if (denseGraph) strokeWidth = 2;
+      if (isSelected) strokeWidth = 4;
+      else if (isHovered) strokeWidth = 3.5;
+
+      const drawStrokeWidth = strokeWidth / zoom;
+
+      if (node.kind === "source") {
+        // Draw as vertical rounded rectangle phone shape!
+        const charCount = String(node.label).length;
+        const w = Math.max(drawRadius * 1.35, (charCount * 8.0) / zoom);
+        const h = drawRadius * 1.95;
+        const r = Math.min(12 / zoom, drawRadius * 0.38);
+        
+        ctx.save();
+        ctx.beginPath();
+        if (ctx.roundRect) {
+          ctx.roundRect(pos.x - w / 2, pos.y - h / 2, w, h, r);
+        } else {
+          ctx.moveTo(pos.x - w / 2 + r, pos.y - h / 2);
+          ctx.lineTo(pos.x + w / 2 - r, pos.y - h / 2);
+          ctx.quadraticCurveTo(pos.x + w / 2, pos.y - h / 2, pos.x + w / 2, pos.y - h / 2 + r);
+          ctx.lineTo(pos.x + w / 2, pos.y + h / 2 - r);
+          ctx.quadraticCurveTo(pos.x + w / 2, pos.y + h / 2, pos.x + w / 2 - r, pos.y + h / 2);
+          ctx.lineTo(pos.x - w / 2 + r, pos.y + h / 2);
+          ctx.quadraticCurveTo(pos.x - w / 2, pos.y + h / 2, pos.x - w / 2, pos.y + h / 2 - r);
+          ctx.lineTo(pos.x - w / 2, pos.y - h / 2 + r);
+          ctx.quadraticCurveTo(pos.x - w / 2, pos.y - h / 2, pos.x - w / 2 + r, pos.y - h / 2);
+        }
+        ctx.fillStyle = fillStyle;
+        ctx.strokeStyle = strokeStyle;
+        ctx.lineWidth = drawStrokeWidth;
+        ctx.fill();
+        ctx.stroke();
+
+        // Draw smartphone speaker slot and home button details
+        if (baseRadius >= 12) {
+          ctx.beginPath();
+          ctx.moveTo(pos.x - w / 4, pos.y - h / 2 + 5 / zoom);
+          ctx.lineTo(pos.x + w / 4, pos.y - h / 2 + 5 / zoom);
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+          ctx.lineWidth = 1.5 / zoom;
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y + h / 2 - 6 / zoom, 2.5 / zoom, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+          ctx.fill();
+        }
+        ctx.restore();
+      } else {
+        // Draw as standard circle node!
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, drawRadius, 0, Math.PI * 2);
+        ctx.fillStyle = fillStyle;
+        ctx.strokeStyle = strokeStyle;
+        ctx.lineWidth = drawStrokeWidth;
+        if (node.kind === "relay") {
+          ctx.setLineDash([4 / zoom, 3 / zoom]);
+        }
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Draw inside glyphs (only for non-source nodes, since source nodes are already phone-shaped!)
+      if (baseRadius >= 12 && zoom > 0.55) {
+        const glyphSize = drawRadius * 0.9;
+        if (node.kind === "p2p" || (node.kind !== "source" && node.kind !== "relay" && node.kind !== "unknown")) {
+          drawServerIcon(ctx, pos.x, pos.y, glyphSize);
+        } else if (node.kind === "relay") {
+          drawTowerIcon(ctx, pos.x, pos.y, glyphSize);
+        }
+      }
+
+      if (node.score >= 0.7 && node.kind !== "source") {
+        const badgeX = pos.x + drawRadius * 0.7;
+        const badgeY = pos.y + drawRadius * 0.7;
+        drawShieldWarningBadge(ctx, badgeX, badgeY, drawRadius * 0.6);
+      }
+
+      const showTitle = !denseGraph || isSelected || isHovered || node.kind === "source";
+      if (showTitle && zoom > 0.55) {
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.scale(dpr, dpr);
+
+        const baseFontSize = denseGraph ? (node.kind === "source" ? 9 : 8) : 12;
+        ctx.font = `bold ${baseFontSize}px var(--font-mono, monospace)`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        
+        ctx.fillStyle = node.kind === "source" ? "#ffffff" : "#121f2b";
+        
+        const screenX = pos.x * zoom + pan.x;
+        const screenY = pos.y * zoom + pan.y;
+        const screenTextY = node.kind === "source" ? screenY : screenY + 3;
+
+        ctx.fillText(node.label, screenX, screenTextY);
+        ctx.restore();
+      }
+
+      const showSubtitle = !denseGraph;
+      if (showSubtitle && zoom > 0.65) {
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.scale(dpr, dpr);
+
+        ctx.font = `700 10px var(--font-sans, sans-serif)`;
+        ctx.fillStyle = "#516070";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+
+        const screenX = pos.x * zoom + pan.x;
+        const screenY = pos.y * zoom + pan.y;
+
+        ctx.fillText(node.kind === "source" ? "A-party" : node.operator, screenX, screenY + baseRadius + 6);
+        ctx.restore();
+      }
+    });
+
+    ctx.restore();
+
+  }, [graph, positions, zoom, pan, selectedNode, selectedEdge, hoveredNodeId, denseGraph, showLinkLabels, layoutMode]);
 
   return (
     <div className={`network-workspace ${denseGraph ? "is-dense" : ""}`}>
@@ -2553,82 +3528,16 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource 
           </div>
         </div>
 
-        <div ref={canvasRef} className="network-canvas graph-canvas">
-          <svg
-            ref={svgRef}
-            viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
-            role="img"
-            aria-label="Interactive communication graph"
-            onPointerMove={handlePointerMove}
+        <div ref={containerRef} className="network-canvas graph-canvas">
+          <canvas
+            ref={realCanvasRef}
+            onPointerDown={handleCanvasPointerDown}
+            onPointerMove={handleCanvasPointerMove}
             onPointerUp={endPointer}
             onPointerCancel={endPointer}
             onLostPointerCapture={endPointer}
-          >
-            <defs>
-              <marker id="arrow-p2p" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-                <path d="M 0 0 L 10 5 L 0 10 z" />
-              </marker>
-              <marker id="arrow-relay" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-                <path d="M 0 0 L 10 5 L 0 10 z" />
-              </marker>
-            </defs>
-            <rect className="graph-hit-area" width={VIEW_WIDTH} height={VIEW_HEIGHT} onPointerDown={beginPan} />
-            <g transform={`translate(${pan.x} ${pan.y}) scale(${zoom})`}>
-              <g className="graph-links">
-                {graph.links.map((link) => {
-                  const source = positions.get(link.sourceId);
-                  const target = positions.get(link.targetId);
-                  if (!source || !target) return null;
-                  const active = selectedEdge?.id === link.id;
-                  const midX = (source.x + target.x) / 2;
-                  const midY = (source.y + target.y) / 2;
-                  const linkWidth = denseGraph ? 1.3 + Math.min(Math.log1p(link.count || 1) * 0.38, 2.1) : 2 + Math.min(link.count, 4);
-                  return (
-                    <g key={link.id} className={`graph-link-group ${active ? "is-selected" : ""}`} onClick={() => onSelect({ type: "edge", link })}>
-                      <line className="graph-link-hit" x1={source.x} y1={source.y} x2={target.x} y2={target.y} />
-                      <line
-                        className={`graph-link ${link.classification}`}
-                        x1={source.x}
-                        y1={source.y}
-                        x2={target.x}
-                        y2={target.y}
-                        strokeWidth={linkWidth}
-                        markerEnd={denseGraph ? undefined : `url(#arrow-${link.classification === "relay" ? "relay" : "p2p"})`}
-                      />
-                      {showLinkLabels ? (
-                        <text className="graph-link-label" x={midX} y={midY - 8} textAnchor="middle">{link.count} session{link.count === 1 ? "" : "s"}</text>
-                      ) : null}
-                    </g>
-                  );
-                })}
-              </g>
-              <g className="graph-nodes">
-                {graph.nodes.map((node) => {
-                  const point = positions.get(node.id) ?? node;
-                  const active = selectedNode?.id === node.id;
-                  const radius = denseGraph ? (node.kind === "source" ? 18 : 12) : node.kind === "source" ? 34 : 25;
-                  return (
-                    <g
-                      key={node.id}
-                      role="button"
-                      tabIndex="0"
-                      className={`graph-node ${node.kind} ${active ? "is-selected" : ""}`}
-                      transform={`translate(${point.x} ${point.y})`}
-                      onPointerDown={(event) => beginNodeDrag(event, node)}
-                      onClick={() => onSelect({ type: "node", node })}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") onSelect({ type: "node", node });
-                      }}
-                    >
-                      <circle r={radius} />
-                      <text className="graph-node-title" y={node.kind === "source" ? 4 : 3} textAnchor="middle">{node.label}</text>
-                      <text className="graph-node-subtitle" y={radius + 17} textAnchor="middle">{node.kind === "source" ? "A-party" : node.operator}</text>
-                    </g>
-                  );
-                })}
-              </g>
-            </g>
-          </svg>
+            style={{ width: "100%", height: "100%", display: "block" }}
+          />
 
           <div className="graph-tools" aria-label="Graph controls">
             <button type="button" onClick={() => zoomBy(0.15)} aria-label="Zoom in" data-tooltip="Zoom in"><ZoomIn size={16} /></button>
@@ -2651,6 +3560,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource 
     </div>
   );
 }
+
 
 function GraphMetric({ label, value, tone = "neutral" }) {
   return (
