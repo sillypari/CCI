@@ -6,6 +6,7 @@ import { PoIPage } from "./components/PoIPage.jsx";
 import { IpPage } from "./components/IpPage.jsx";
 import { ImeiPage } from "./components/ImeiPage.jsx";
 import { AnimatePresence, motion } from "framer-motion";
+import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY } from "d3-force";
 import {
   Activity,
   AlertTriangle,
@@ -1966,7 +1967,18 @@ function seededUnit(value) {
   return (stableGraphHash(value) % 10000) / 10000;
 }
 
-function fitGraphPositions(rawPositions, width, height, padding = 76) {
+function stretchGraphPositionsX(positions, width, padding = 72, factor = 1.44) {
+  const stretched = new Map();
+  positions.forEach((point, id) => {
+    stretched.set(id, {
+      x: clamp(width / 2 + (point.x - width / 2) * factor, padding, width - padding),
+      y: point.y
+    });
+  });
+  return stretched;
+}
+
+function fitGraphPositions(rawPositions, width, height, padding = 76, maxScale = 1.18) {
   const values = [...rawPositions.values()];
   if (!values.length) return rawPositions;
   const minX = Math.min(...values.map((point) => point.x));
@@ -1975,7 +1987,7 @@ function fitGraphPositions(rawPositions, width, height, padding = 76) {
   const maxY = Math.max(...values.map((point) => point.y));
   const spanX = Math.max(maxX - minX, 1);
   const spanY = Math.max(maxY - minY, 1);
-  const scale = Math.min((width - padding * 2) / spanX, (height - padding * 2) / spanY, 1.18);
+  const scale = Math.min((width - padding * 2) / spanX, (height - padding * 2) / spanY, maxScale);
   const midX = (minX + maxX) / 2;
   const midY = (minY + maxY) / 2;
   const fitted = new Map();
@@ -1988,7 +2000,7 @@ function fitGraphPositions(rawPositions, width, height, padding = 76) {
   return fitted;
 }
 
-function layoutCommunicationGraph(nodes, links, width, height) {
+function layoutClusteredCommunicationGraph(nodes, links, width, height) {
   if (!nodes.length) return new Map();
 
   const sourceNodes = nodes
@@ -2073,6 +2085,70 @@ function layoutCommunicationGraph(nodes, links, width, height) {
   });
 
   return fitGraphPositions(positions, width, height);
+}
+
+function layoutCommunicationGraph(nodes, links, width, height) {
+  if (!nodes.length) return new Map();
+
+  const clusteredPositions = layoutClusteredCommunicationGraph(nodes, links, width, height);
+  const graphTooLargeForPhysics = nodes.length > 700 || links.length > 900;
+  if (graphTooLargeForPhysics || !links.length) return clusteredPositions;
+
+  const centerX = width * 0.5;
+  const centerY = height * 0.5;
+  const simNodes = nodes.map((node) => {
+    const initial = clusteredPositions.get(node.id) ?? {
+      x: centerX + (seededUnit(`${node.id}:x`) - 0.5) * width * 0.36,
+      y: centerY + (seededUnit(`${node.id}:y`) - 0.5) * height * 0.36
+    };
+    return { ...node, x: initial.x, y: initial.y, vx: 0, vy: 0 };
+  });
+  const nodeById = new Map(simNodes.map((node) => [node.id, node]));
+  const simLinks = links
+    .filter((link) => nodeById.has(link.sourceId) && nodeById.has(link.targetId))
+    .map((link) => ({ ...link, source: link.sourceId, target: link.targetId }));
+
+  if (!simLinks.length) return clusteredPositions;
+
+  const linkDistance = (link) => {
+    const countPull = Math.min(Math.log1p(link.count || 1) * 6, 34);
+    const base = link.classification === "p2p" ? 112 : link.classification === "relay" ? 182 : 150;
+    return Math.max(76, base - countPull);
+  };
+  const linkStrength = (link) => {
+    const countBoost = Math.min(Math.log1p(link.count || 1) * 0.018, 0.08);
+    if (link.classification === "p2p") return 0.2 + countBoost;
+    if (link.classification === "relay") return 0.045 + countBoost * 0.45;
+    return 0.08 + countBoost * 0.6;
+  };
+  const forceDense = nodes.length > 180 || links.length > 220;
+  const collideRadius = (node) => (node.kind === "source" ? (forceDense ? 22 : 47) : (forceDense ? 13 : 31));
+  const chargeStrength = (node) => {
+    if (node.kind === "source") return forceDense ? -145 : -680;
+    return forceDense ? -42 : nodes.length > 220 ? -82 : -118;
+  };
+
+  const simulation = forceSimulation(simNodes)
+    .force("link", forceLink(simLinks).id((node) => node.id).distance(linkDistance).strength(linkStrength).iterations(1))
+    .force("charge", forceManyBody().strength(chargeStrength).distanceMax(370))
+    .force("collide", forceCollide(collideRadius).strength(0.88).iterations(2))
+    .force("x", forceX((node) => {
+      const target = clusteredPositions.get(node.id);
+      return node.kind === "source" ? centerX : target?.x ?? centerX;
+    }).strength((node) => (node.kind === "source" ? (forceDense ? 0.035 : 0.09) : (forceDense ? 0.012 : 0.024))))
+    .force("y", forceY((node) => {
+      const target = clusteredPositions.get(node.id);
+      return node.kind === "source" ? centerY : target?.y ?? centerY;
+    }).strength((node) => (node.kind === "source" ? (forceDense ? 0.035 : 0.09) : (forceDense ? 0.012 : 0.024))))
+    .stop();
+
+  const tickCount = nodes.length > 420 ? 82 : nodes.length > 280 ? 96 : nodes.length > 140 ? 116 : 150;
+  for (let index = 0; index < tickCount; index += 1) {
+    simulation.tick();
+  }
+
+  const fittedPositions = fitGraphPositions(new Map(simNodes.map((node) => [node.id, { x: node.x, y: node.y }])), width, height, forceDense ? 72 : 92, forceDense ? 1.68 : 1.18);
+  return forceDense ? stretchGraphPositionsX(fittedPositions, width) : fittedPositions;
 }
 function NetworkGraph({ graphData, selected, onSelect, onExtract }) {
   const VIEW_WIDTH = 1120;
@@ -2394,7 +2470,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract }) {
                 {graph.nodes.map((node) => {
                   const point = positions.get(node.id) ?? node;
                   const active = selectedNode?.id === node.id;
-                  const radius = node.kind === "source" ? 34 : 25;
+                  const radius = denseGraph ? (node.kind === "source" ? 18 : 12) : node.kind === "source" ? 34 : 25;
                   return (
                     <g
                       key={node.id}
