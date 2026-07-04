@@ -144,8 +144,12 @@ class GraphNode(BaseModel):
     count: int
     bytes: int
     confidence: float = Field(ge=0, le=1)
+    score: float = Field(default=0, ge=0, le=1)
+    cluster_id: str | None = None
+    first_seen: datetime | None = None
     last_seen: datetime | None = None
     sessions: list[SessionRecord] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class GraphEdge(BaseModel):
@@ -157,13 +161,22 @@ class GraphEdge(BaseModel):
     bytes: int
     duration_seconds: int
     confidence: float = Field(ge=0, le=1)
+    score: float = Field(default=0, ge=0, le=1)
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
     sessions: list[SessionRecord] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class GraphMetrics(BaseModel):
     nodes: int
     edges: int
     sessions: int
+    scanned_sessions: int = 0
+    omitted_edges: int = 0
+    omitted_nodes: int = 0
+    total_sources: int = 0
+    total_endpoints: int = 0
     p2p: int
     relay: int
     unknown: int
@@ -172,11 +185,34 @@ class GraphMetrics(BaseModel):
     last_seen: datetime | None = None
 
 
+class GraphCluster(BaseModel):
+    id: str
+    label: str
+    kind: str
+    nodes: int
+    edges: int
+    sessions: int
+    score: float = Field(default=0, ge=0, le=1)
+
+
+class GraphInsight(BaseModel):
+    id: str
+    insight_type: str
+    severity: PatternSeverity = "low"
+    title: str
+    description: str
+    entities: dict[str, Any] = Field(default_factory=dict)
+    score: float = Field(default=0, ge=0, le=1)
+
+
 class CommunicationGraph(BaseModel):
     nodes: list[GraphNode]
     links: list[GraphEdge]
     sessions: list[SessionRecord]
     metrics: GraphMetrics
+    clusters: list[GraphCluster] = Field(default_factory=list)
+    insights: list[GraphInsight] = Field(default_factory=list)
+    view: dict[str, Any] = Field(default_factory=dict)
 
 
 class SuspiciousPattern(BaseModel):
