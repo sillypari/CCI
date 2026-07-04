@@ -30,33 +30,47 @@ This repository contains a working Phase 1 implementation with a FastAPI backend
 
 ### Dashboard Overview
 The main dashboard displays active IMEI devices, cell tower location hotspots with day/night splits, active VoIP applications, and a live stream of ingested sessions.
-![Dashboard Overview](Screenshots/dashboard.png)
+<p align="center">
+  <img src="Screenshots/dashboard.png" width="75%" alt="Dashboard Overview"/>
+</p>
 
 ### Interactive Investigation Cockpit (Graph Visualizer)
 A dynamic communication map displaying relationships between target MSISDNs, servers, and relays. Supports multiple layout models (Force-Directed, Concentric Radial, and symmetrical 3-Column Sankey Flow) with screen-space size preservation on zoom.
-![Investigation Cockpit](Screenshots/map.png)
+<p align="center">
+  <img src="Screenshots/map.png" width="75%" alt="Investigation Cockpit"/>
+</p>
 
 ### Person of Interest (PoI) Dossier Report
 Generate summaries detailing device telemetry, application usage, and cell towers.
-![PoI Dossier Report](Screenshots/Report.png)
+<p align="center">
+  <img src="Screenshots/Report.png" width="75%" alt="PoI Dossier Report"/>
+</p>
 
 ### Handset and IMEI Intelligence
 View global IMEI device frequencies and automatically identify shared handsets across multiple suspects.
-![Handset and IMEI Intelligence](Screenshots/imei.png)
+<p align="center">
+  <img src="Screenshots/imei.png" width="75%" alt="Handset and IMEI Intelligence"/>
+</p>
 
 ### Session Explorer and Advanced Parallel Filters
 Query session databases and filter by IPs, Cell IDs, IMEIs, and multi-window parallel date-time slots.
-![Session Explorer](Screenshots/session.png)
+<p align="center">
+  <img src="Screenshots/session.png" width="75%" alt="Session Explorer"/>
+</p>
 
 ### Request Packages and Ingestion Status
 Compare generated CGNAT request packages and monitor file upload status.
-![Request Packages](Screenshots/Packages.png)
-![Evidence Ingestion Status](Screenshots/upload.png)
+<p align="center">
+  <img src="Screenshots/Packages.png" width="48%" alt="Request Packages"/>
+  <img src="Screenshots/upload.png" width="48%" alt="Evidence Ingestion Status"/>
+</p>
 
 ### Custom Import Specifications and Audit Log
 Manage operator column mappings, inspect active platform ranges, and review tamper-evident logs.
-![Platform Ranges](Screenshots/Seeting_platformranges.png)
-![Audit Logs](Screenshots/AuditLogs.png)
+<p align="center">
+  <img src="Screenshots/Seeting_platformranges.png" width="48%" alt="Platform Ranges"/>
+  <img src="Screenshots/AuditLogs.png" width="48%" alt="Audit Logs"/>
+</p>
 
 ---
 
