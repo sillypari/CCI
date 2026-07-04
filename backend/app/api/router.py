@@ -224,22 +224,44 @@ def get_extraction(extraction_id: str) -> ExtractionResult:
 @api_router.get("/graph", response_model=CommunicationGraph, tags=["graph"])
 def communication_graph(
     msisdn: str | None = None,
+    focus: str | None = None,
+    focus_type: str = Query(default="msisdn", pattern="^(msisdn|ip|endpoint|imei|imsi|any)$"),
     case_id: str | None = None,
     classification: str | None = Query(default=None, pattern="^(p2p|relay|unknown)$"),
-    limit: int = Query(default=250, ge=1, le=5_000),
+    limit: int = Query(default=100, ge=1, le=5_000),
     scan_limit: int = Query(default=20_000, ge=1, le=100_000),
+    hops: int = Query(default=1, ge=1, le=2),
+    include_relay: bool = True,
+    min_score: float = Query(default=0.0, ge=0, le=1),
+    rank_by: str = Query(default="score", pattern="^(score|volume|confidence|recent|p2p)$"),
+    started_from: str | None = None,
+    started_to: str | None = None,
 ) -> CommunicationGraph:
-    return store.communication_graph(msisdn=msisdn, classification=classification, case_id=case_id, limit=limit, scan_limit=scan_limit)
+    return store.communication_graph(
+        msisdn=msisdn, focus=focus, focus_type=focus_type,
+        classification=classification, case_id=case_id,
+        limit=limit, scan_limit=scan_limit, hops=hops,
+        include_relay=include_relay, min_score=min_score,
+        rank_by=rank_by, started_from=started_from, started_to=started_to,
+    )
 
 @api_router.get("/graph/export.json", tags=["graph"])
 def export_graph_json(
     msisdn: str | None = None,
+    focus: str | None = None,
+    focus_type: str = Query(default="msisdn", pattern="^(msisdn|ip|endpoint|imei|imsi|any)$"),
     case_id: str | None = None,
     classification: str | None = Query(default=None, pattern="^(p2p|relay|unknown)$"),
     limit: int = Query(default=5_000, ge=1, le=20_000),
+    hops: int = Query(default=1, ge=1, le=2),
+    include_relay: bool = True,
+    min_score: float = Query(default=0.0, ge=0, le=1),
+    rank_by: str = Query(default="score", pattern="^(score|volume|confidence|recent|p2p)$"),
+    started_from: str | None = None,
+    started_to: str | None = None,
 ) -> Response:
     return Response(
-        content=store.export_graph_json(msisdn=msisdn, classification=classification, case_id=case_id, limit=limit),
+        content=store.export_graph_json(msisdn=msisdn, focus=focus, focus_type=focus_type, classification=classification, case_id=case_id, limit=limit, hops=hops, include_relay=include_relay, min_score=min_score, rank_by=rank_by, started_from=started_from, started_to=started_to),
         media_type="application/json",
         headers={"Content-Disposition": "attachment; filename=pramaan-ipdr-graph.json"},
     )
@@ -248,12 +270,20 @@ def export_graph_json(
 @api_router.get("/graph/export.graphml", tags=["graph"])
 def export_graph_graphml(
     msisdn: str | None = None,
+    focus: str | None = None,
+    focus_type: str = Query(default="msisdn", pattern="^(msisdn|ip|endpoint|imei|imsi|any)$"),
     case_id: str | None = None,
     classification: str | None = Query(default=None, pattern="^(p2p|relay|unknown)$"),
     limit: int = Query(default=5_000, ge=1, le=20_000),
+    hops: int = Query(default=1, ge=1, le=2),
+    include_relay: bool = True,
+    min_score: float = Query(default=0.0, ge=0, le=1),
+    rank_by: str = Query(default="score", pattern="^(score|volume|confidence|recent|p2p)$"),
+    started_from: str | None = None,
+    started_to: str | None = None,
 ) -> Response:
     return Response(
-        content=store.export_graph_graphml(msisdn=msisdn, classification=classification, case_id=case_id, limit=limit),
+        content=store.export_graph_graphml(msisdn=msisdn, focus=focus, focus_type=focus_type, classification=classification, case_id=case_id, limit=limit, hops=hops, include_relay=include_relay, min_score=min_score, rank_by=rank_by, started_from=started_from, started_to=started_to),
         media_type="application/graphml+xml",
         headers={"Content-Disposition": "attachment; filename=pramaan-ipdr-graph.graphml"},
     )

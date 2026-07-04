@@ -1312,116 +1312,245 @@ function ExtractionsPage({ extractions, runExtraction }) {
   );
 }
 
+function primarySourceMsisdnFromNode(node) {
+  if (!node) return "";
+  if (node.kind === "source") return node.id;
+  return node.sessions?.find((session) => session.a_party_msisdn)?.a_party_msisdn ?? "";
+}
+
+function sourceMsisdnFromSelection(selection) {
+  if (!selection) return "";
+  if (selection.type === "node") return primarySourceMsisdnFromNode(selection.node);
+  if (selection.type === "edge") return selection.link?.sourceId ?? "";
+  return "";
+}
 function MapPage({ runExtraction, sessionCount = 0 }) {
-  const [msisdn, setMsisdn] = useState("");
-  const [classification, setClassification] = useState("all");
-  const [selected, setSelected] = useState(null);
+  // ── Query state ──────────────────────────────────────────────
+  const [focus,         setFocus]         = useState("");
+  const [focusType,     setFocusType]     = useState("msisdn");
+  const [classification,setClassification]= useState("all");
+  const [graphLimit,    setGraphLimit]    = useState(100);
+  const [hops,          setHops]          = useState(1);
+  const [includeRelay,  setIncludeRelay]  = useState(true);
+  const [rankBy,        setRankBy]        = useState("score");
+  const [minScore,      setMinScore]      = useState(0);
+  const [startedFrom,   setStartedFrom]   = useState("");
+  const [startedTo,     setStartedTo]     = useState("");
+  // ── Graph state ──────────────────────────────────────────────
+  const [selected,  setSelected]  = useState(null);
   const [graphData, setGraphData] = useState(() => emptyGraphData);
   const [graphBusy, setGraphBusy] = useState(false);
-  const [graphError, setGraphError] = useState("");
-  const [graphLimit, setGraphLimit] = useState(250);
-  const deferredMsisdn = useDeferredValue(msisdn);
-  const graphLimitOptions = [
-    { value: 100, label: "Top 100 flows" },
-    { value: 250, label: "Top 250 flows" },
-    { value: 500, label: "Top 500 flows" },
-    { value: 1000, label: "Top 1000 flows" }
+  const [graphError,setGraphError]= useState("");
+  const deferredFocus = useDeferredValue(focus);
+
+  const focusTypeOptions  = [
+    { value: "msisdn",   label: "MSISDN" },
+    { value: "ip",       label: "Dest IP" },
+    { value: "imei",     label: "IMEI" },
+    { value: "imsi",     label: "IMSI" },
+    { value: "any",      label: "Any field" },
   ];
+  const rankByOptions = [
+    { value: "score",      label: "Investigation score" },
+    { value: "p2p",        label: "P2P first" },
+    { value: "confidence", label: "Confidence" },
+    { value: "volume",     label: "Session volume" },
+    { value: "recent",     label: "Most recent" },
+  ];
+  const graphLimitOptions = [
+    { value: 50,   label: "Top 50 flows"   },
+    { value: 100,  label: "Top 100 flows"  },
+    { value: 250,  label: "Top 250 flows"  },
+    { value: 500,  label: "Top 500 flows"  },
+  ];
+
+  // ── Derived export query ─────────────────────────────────────
   const exportQuery = useMemo(() => {
     const params = new URLSearchParams();
-    const trimmedMsisdn = msisdn.trim();
-    if (trimmedMsisdn) params.set("msisdn", trimmedMsisdn);
+    const f = focus.trim();
+    if (f) { params.set("focus", f); params.set("focus_type", focusType); }
     if (classification !== "all") params.set("classification", classification);
-    params.set("limit", String(graphLimit));
-    const query = params.toString();
-    return query ? `?${query}` : "";
-  }, [classification, graphLimit, msisdn]);
+    params.set("limit",          String(graphLimit));
+    params.set("hops",           String(hops));
+    params.set("include_relay",  String(includeRelay));
+    params.set("rank_by",        rankBy);
+    if (minScore > 0) params.set("min_score", String(minScore));
+    if (startedFrom) params.set("started_from", startedFrom);
+    if (startedTo)   params.set("started_to",   startedTo);
+    const q = params.toString(); return q ? `?${q}` : "";
+  }, [focus, focusType, classification, graphLimit, hops, includeRelay, rankBy, minScore, startedFrom, startedTo]);
 
+  // ── Focus helpers ────────────────────────────────────────────
+  const focusAparty = useCallback((target) => {
+    const v = String(target ?? "").trim();
+    if (v) { setFocus(v); setFocusType("msisdn"); }
+  }, []);
+
+  const selectedSourceMsisdn = useMemo(() => sourceMsisdnFromSelection(selected), [selected]);
+  const topSourceMsisdn = useMemo(() => {
+    const srcs = graphData.nodes?.filter(n => n.kind === "source") ?? [];
+    return [...srcs].sort((a,b) => (b.score??0)-(a.score??0) || (b.count??0)-(a.count??0))[0]?.id ?? "";
+  }, [graphData.nodes]);
+  const extractionMsisdn = focus.trim() || selectedSourceMsisdn || topSourceMsisdn;
+
+  const handleRunExtraction = useCallback((target) => {
+    const v = String(target ?? extractionMsisdn).trim();
+    if (!v) return null;
+    return runExtraction({ msisdn: v, depth: 1, min_confidence: 0.65 });
+  }, [extractionMsisdn, runExtraction]);
+
+  // ── Load graph ───────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
-    const loadGraph = async () => {
-      if (!sessionCount) {
-        setGraphData(emptyGraphData);
-        setGraphBusy(false);
-        setGraphError("");
-        return;
-      }
+    const load = async () => {
+      if (!sessionCount) { setGraphData(emptyGraphData); setGraphBusy(false); setGraphError(""); return; }
       const params = new URLSearchParams();
-      const trimmedMsisdn = deferredMsisdn.trim();
-      if (trimmedMsisdn) params.set("msisdn", trimmedMsisdn);
+      const f = deferredFocus.trim();
+      if (f) { params.set("focus", f); params.set("focus_type", focusType); }
       if (classification !== "all") params.set("classification", classification);
-      params.set("limit", String(graphLimit));
-      params.set("scan_limit", "20000");
+      params.set("limit",          String(graphLimit));
+      params.set("scan_limit",     "20000");
+      params.set("hops",           String(hops));
+      params.set("include_relay",  String(includeRelay));
+      params.set("rank_by",        rankBy);
+      if (minScore > 0) params.set("min_score", String(minScore));
+      if (startedFrom) params.set("started_from", startedFrom);
+      if (startedTo)   params.set("started_to",   startedTo);
       setGraphBusy(true);
       try {
         const payload = await api.graph(`?${params.toString()}`);
-        if (!cancelled) {
-          setGraphData(normalizeGraphResponse(payload));
-          setGraphError("");
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setGraphData(emptyGraphData);
-          setGraphError(error.message);
-        }
+        if (!cancelled) { setGraphData(normalizeGraphResponse(payload)); setGraphError(""); }
+      } catch(err) {
+        if (!cancelled) { setGraphData(emptyGraphData); setGraphError(err.message); }
       } finally {
         if (!cancelled) setGraphBusy(false);
       }
     };
-    loadGraph();
-    return () => {
-      cancelled = true;
-    };
-  }, [classification, deferredMsisdn, graphLimit, sessionCount]);
+    load();
+    return () => { cancelled = true; };
+  }, [deferredFocus, focusType, classification, graphLimit, hops, includeRelay, rankBy, minScore, startedFrom, startedTo, sessionCount]);
 
-  const graphStatus = sessionCount ? (graphBusy ? "Syncing" : `${number(graphData.metrics?.edges ?? 0)} visible`) : "No data";
+  const graphStatus = sessionCount
+    ? (graphBusy ? "Syncing" : `${number(graphData.metrics?.edges ?? 0)} flows · ${number(graphData.metrics?.nodes ?? 0)} nodes`)
+    : "No data";
+
+  const serverInsights  = graphData.insights  ?? [];
+  const serverClusters  = graphData.clusters  ?? [];
+  const serverView      = graphData.view      ?? {};
 
   return (
     <motion.section {...pageMotion} className="page-grid">
       <section className="panel span-12 map-shell graph-shell">
         <PanelHeader
           icon={Network}
-          title="Communication Map"
+          title="Investigation Cockpit"
           action={
             <div className="map-actions">
               <Badge tone={graphBusy ? "warning" : sessionCount ? "brand" : "neutral"}>{graphStatus}</Badge>
+
+              {/* Focus entity */}
               <label className="map-query">
                 <Search size={16} />
-                <input aria-label="A-party MSISDN" value={msisdn} onChange={(event) => setMsisdn(event.target.value)} placeholder="Filter MSISDN" />
+                <input
+                  aria-label="Focus entity"
+                  value={focus}
+                  onChange={e => setFocus(e.target.value)}
+                  placeholder="MSISDN / IP / IMEI…"
+                />
               </label>
-              <SelectControl ariaLabel="Graph flow density limit" value={graphLimit} onChange={setGraphLimit} options={graphLimitOptions} />
-              <SelectControl
-                ariaLabel="Graph classification filter"
-                value={classification}
-                onChange={setClassification}
-                options={[
-                  { value: "all", label: "All flows" },
-                  { value: "p2p", label: "P2P only" },
-                  { value: "relay", label: "Relay only" },
-                  { value: "unknown", label: "Unknown" }
-                ]}
-              />
+              <SelectControl ariaLabel="Focus type"        value={focusType}      onChange={setFocusType}      options={focusTypeOptions}  />
+              <SelectControl ariaLabel="Rank by"           value={rankBy}         onChange={setRankBy}         options={rankByOptions}      />
+              <SelectControl ariaLabel="Flow limit"        value={graphLimit}     onChange={setGraphLimit}     options={graphLimitOptions}  />
+              <SelectControl ariaLabel="Classification"    value={classification} onChange={setClassification} options={[
+                { value: "all",     label: "All flows"  },
+                { value: "p2p",     label: "P2P only"   },
+                { value: "relay",   label: "Relay only" },
+                { value: "unknown", label: "Unknown"    },
+              ]} />
+
+              {/* Hops toggle */}
+              <label className="map-toggle" title="Expand 2-hop neighborhood">
+                <input type="checkbox" checked={hops === 2} onChange={e => setHops(e.target.checked ? 2 : 1)} />
+                2-hop
+              </label>
+              {/* Relay toggle */}
+              <label className="map-toggle" title="Hide relay/noise traffic">
+                <input type="checkbox" checked={!includeRelay} onChange={e => setIncludeRelay(!e.target.checked)} />
+                Hide relay
+              </label>
+
+              {/* Score floor */}
+              <label className="map-score-filter" title="Minimum investigation score (0 = show all)">
+                <span>Score ≥ {Math.round(minScore * 100)}%</span>
+                <input type="range" min={0} max={0.9} step={0.05} value={minScore} onChange={e => setMinScore(parseFloat(e.target.value))} />
+              </label>
+
+              {/* Time range */}
+              <label className="map-date" title="Filter sessions from date">
+                <input type="date" value={startedFrom} onChange={e => setStartedFrom(e.target.value)} />
+              </label>
+              <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>→</span>
+              <label className="map-date" title="Filter sessions to date">
+                <input type="date" value={startedTo} onChange={e => setStartedTo(e.target.value)} />
+              </label>
+
+              {/* Exports + Extract */}
               <a className="button secondary button-link" href={api.graphJsonUrl(exportQuery)} download><Download size={16} /><span>JSON</span></a>
               <a className="button secondary button-link" href={api.graphGraphmlUrl(exportQuery)} download><Network size={16} /><span>GraphML</span></a>
-              <Button type="button" icon={Target} disabled={!msisdn.trim()} onClick={() => runExtraction({ msisdn, depth: 1, min_confidence: 0.65 })}>Extract</Button>
+              <Button type="button" icon={Target} disabled={!extractionMsisdn} onClick={() => handleRunExtraction()}>Extract</Button>
             </div>
           }
         />
+
+        {/* Alert bar */}
         {graphError ? <div className="graph-alert" role="alert"><AlertTriangle size={16} /> <span>{graphError}</span></div> : null}
-        {!sessionCount ? <div className="graph-alert neutral"><Database size={16} /> <span>Upload IPDR evidence to build a communication map.</span></div> : null}
+        {!sessionCount ? <div className="graph-alert neutral"><Database size={16} /> <span>Upload IPDR evidence to build an investigation map.</span></div> : null}
+
+        {/* Server insights bar */}
+        {serverInsights.length > 0 && (
+          <div className="graph-insights-bar">
+            {serverInsights.map(ins => (
+              <div key={ins.id} className={`graph-insight-chip ${ins.severity}`}>
+                <span className="graph-insight-chip__title">{ins.title}</span>
+                <span className="graph-insight-chip__desc">{ins.description}</span>
+                <span className={`badge ${ins.severity === "high" ? "danger" : ins.severity === "medium" ? "warning" : "neutral"}`}>{Math.round((ins.score ?? 0) * 100)}%</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Cluster summary bar */}
+        {serverClusters.length > 0 && (
+          <div className="graph-clusters-bar">
+            {serverClusters.slice(0, 6).map(c => (
+              <div key={c.id} className="graph-cluster-chip">
+                <span className="graph-cluster-chip__label">{c.label}</span>
+                <span className="graph-cluster-chip__meta">{number(c.sessions)} sessions · {number(c.edges)} links</span>
+              </div>
+            ))}
+            {serverView.mode === "focused" && (
+              <div className="graph-cluster-chip focused">
+                <span className="graph-cluster-chip__label">Focused: {serverView.focus}</span>
+                <span className="graph-cluster-chip__meta">{serverView.hops}-hop · ranked by {serverView.rank_by}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="graph-render-wrap">
           {graphBusy ? (
             <div className="graph-loading-panel">
               <Loader2 size={28} className="animate-spin" />
-              <strong>Preparing top {graphLimit} communication flows</strong>
-              <span>Aggregating sessions server-side and rendering a bounded graph slice.</span>
+              <strong>Computing ranked investigation slice…</strong>
+              <span>Scoring edges, clustering nodes, and suppressing relay noise.</span>
             </div>
           ) : null}
           <NetworkGraph
             graphData={graphData}
             selected={selected}
             onSelect={setSelected}
-            onExtract={() => (msisdn.trim() ? runExtraction({ msisdn, depth: 1, min_confidence: 0.65 }) : null)}
+            onExtract={handleRunExtraction}
+            onFocusSource={focusAparty}
           />
         </div>
       </section>
@@ -2150,7 +2279,7 @@ function layoutCommunicationGraph(nodes, links, width, height) {
   const fittedPositions = fitGraphPositions(new Map(simNodes.map((node) => [node.id, { x: node.x, y: node.y }])), width, height, forceDense ? 72 : 92, forceDense ? 1.68 : 1.18);
   return forceDense ? stretchGraphPositionsX(fittedPositions, width) : fittedPositions;
 }
-function NetworkGraph({ graphData, selected, onSelect, onExtract }) {
+function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource }) {
   const VIEW_WIDTH = 1120;
   const VIEW_HEIGHT = 640;
   const svgRef = useRef(null);
@@ -2400,6 +2529,13 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract }) {
   const selectedEdge = selected?.type === "edge" ? selected.link : null;
   const denseGraph = graph.nodes.length > 80 || graph.links.length > 80;
   const showLinkLabels = graph.links.length <= 42;
+  const graphInsights = useMemo(() => {
+    const byCount = (a, b) => (b.count ?? 0) - (a.count ?? 0) || a.id.localeCompare(b.id);
+    const sources = graph.nodes.filter((node) => node.kind === "source").sort(byCount).slice(0, 6);
+    const endpoints = graph.nodes.filter((node) => node.kind !== "source").sort(byCount).slice(0, 6);
+    const relayLinks = graph.links.filter((link) => link.classification === "relay").sort(byCount).slice(0, 4);
+    return { sources, endpoints, relayLinks };
+  }, [graph.links, graph.nodes]);
 
   return (
     <div className={`network-workspace ${denseGraph ? "is-dense" : ""}`}>
@@ -2505,14 +2641,11 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract }) {
 
       <aside className="graph-inspector">
         {selectedNode ? (
-          <GraphNodeInspector node={selectedNode} onExtract={onExtract} />
+          <GraphNodeInspector node={selectedNode} onExtract={onExtract} onFocusSource={onFocusSource} />
         ) : selectedEdge ? (
-          <GraphEdgeInspector link={selectedEdge} />
+          <GraphEdgeInspector link={selectedEdge} onExtract={onExtract} onFocusSource={onFocusSource} />
         ) : (
-          <div className="graph-empty-inspector">
-            <strong>Select a node or connection</strong>
-            <span>Inspect operators, confidence, evidence rows, and actionable B-party leads.</span>
-          </div>
+          <GraphInvestigationSummary graph={graph} insights={graphInsights} denseGraph={denseGraph} onExtract={onExtract} onFocusSource={onFocusSource} />
         )}
       </aside>
     </div>
@@ -2528,44 +2661,177 @@ function GraphMetric({ label, value, tone = "neutral" }) {
   );
 }
 
-function GraphNodeInspector({ node, onExtract }) {
-  const sessions = node.sessions ?? [];
-  const latest = sessions[0];
+function GraphInvestigationSummary({ graph, insights, denseGraph, onExtract, onFocusSource }) {
+  const hasGraph = graph.nodes.length > 0;
+  if (!hasGraph) {
+    return (
+      <div className="graph-empty-inspector">
+        <strong>Select a focus entity</strong>
+        <span>Enter an MSISDN, IP, or IMEI in the search bar above to load a focused investigation subgraph — or leave it blank for a ranked overview of the top flows.</span>
+      </div>
+    );
+  }
+
+  // Use backend-ranked data if available, else fall back to local sort
+  const sourceNodes    = graph.nodes.filter(n => n.kind === "source")
+    .sort((a,b) => (b.score??0)-(a.score??0) || (b.count??0)-(a.count??0)).slice(0,6);
+  const endpointNodes  = graph.nodes.filter(n => n.kind !== "source")
+    .sort((a,b) => (b.score??0)-(a.score??0) || (b.count??0)-(a.count??0)).slice(0,6);
+  const sharedEndpoints= endpointNodes.filter(n => (n.metadata?.source_count ?? 1) > 1);
+  const p2pLinks       = graph.links.filter(l => l.classification === "p2p")
+    .sort((a,b) => (b.score??0)-(a.score??0)).slice(0,4);
+
   return (
     <div className="graph-inspector__content">
-      <span className="eyebrow">Node</span>
+      <span className="eyebrow">Investigation overview</span>
+      <h3>{denseGraph ? "Dense overview" : graph.metrics?.sessions ? `${number(graph.metrics.sessions)} sessions` : "Graph overview"}</h3>
+      <p className="graph-inspector-note">Click any node or link for details · Click "Focus A-party" to re-query around a single suspect.</p>
+
+      {/* Metrics row */}
+      <div className="graph-mini-metrics">
+        <div><span>P2P leads</span><strong className="success">{number(graph.metrics?.p2p ?? 0)}</strong></div>
+        <div><span>High conf.</span><strong>{number(graph.metrics?.high_confidence ?? 0)}</strong></div>
+        <div><span>Omitted</span><strong className="muted">{number(graph.metrics?.omitted_edges ?? 0)}</strong></div>
+      </div>
+
+      {/* Ranked A-parties */}
+      <div className="graph-insight-panel">
+        <strong>Ranked A-parties</strong>
+        <div className="graph-insight-list">
+          {sourceNodes.length ? sourceNodes.map(node => (
+            <div className="graph-insight-row" key={node.id}>
+              <button type="button" onClick={() => onFocusSource(node.id)}>
+                <span className="mono">{node.title}</span>
+                <small>score {Math.round((node.score??0)*100)}% · {number(node.count)} sessions</small>
+              </button>
+              <button type="button" className="graph-row-action" onClick={() => onExtract(node.id)}>Extract</button>
+            </div>
+          )) : <span className="graph-muted">No A-party nodes in this slice.</span>}
+        </div>
+      </div>
+
+      {/* Shared endpoints (multi-source) */}
+      {sharedEndpoints.length > 0 && (
+        <div className="graph-insight-panel warning">
+          <strong>Shared endpoints <Badge tone="warning">{sharedEndpoints.length}</Badge></strong>
+          <div className="graph-insight-list compact">
+            {sharedEndpoints.map(node => (
+              <div className="graph-insight-stat" key={node.id}>
+                <span className="mono">{node.title}</span>
+                <small>{node.metadata?.source_count ?? "?"} A-parties · {node.kind}</small>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* P2P direct leads */}
+      {p2pLinks.length > 0 && (
+        <div className="graph-insight-panel success">
+          <strong>Direct P2P leads</strong>
+          <div className="graph-insight-list compact">
+            {p2pLinks.map(link => (
+              <div className="graph-insight-stat" key={link.id}>
+                <span className="mono">{link.sourceId?.slice(-4)} → {link.targetId}</span>
+                <small>score {Math.round((link.score??0)*100)}% · {number(link.count)} sessions · {formatDuration(link.duration_seconds??0)}</small>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* High-volume endpoints */}
+      <div className="graph-insight-panel">
+        <strong>Top endpoints</strong>
+        <div className="graph-insight-list compact">
+          {endpointNodes.length ? endpointNodes.map(node => (
+            <div className="graph-insight-stat" key={node.id}>
+              <span className="mono">{node.title}</span>
+              <small>{number(node.count)} sessions · {node.kind} · {node.operator}</small>
+            </div>
+          )) : <span className="graph-muted">No endpoint nodes in this slice.</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+function GraphNodeInspector({ node, onExtract, onFocusSource }) {
+  const sessions     = node.sessions ?? [];
+  const latest       = sessions[0];
+  const primarySource= primarySourceMsisdnFromNode(node);
+  const isSource     = node.kind === "source";
+  const imeis        = node.metadata?.imeis?.filter(Boolean) ?? [];
+  const imsis        = node.metadata?.imsis?.filter(Boolean) ?? [];
+  const ports        = node.metadata?.destination_ports ?? node.metadata?.ports ?? [];
+  const apps         = node.metadata?.apps?.filter(Boolean) ?? [];
+  const sharedCount  = node.metadata?.source_count ?? null;
+  return (
+    <div className="graph-inspector__content">
+      <span className="eyebrow">{isSource ? "A-party (suspect)" : "Destination endpoint"}</span>
       <h3>{node.title}</h3>
-      <Badge tone={toneForClass(node.kind === "source" ? "p2p" : node.kind)}>{node.kind === "source" ? "A-party" : node.kind}</Badge>
+      <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 }}>
+        <Badge tone={toneForClass(isSource ? "p2p" : node.kind)}>{isSource ? "A-party" : node.kind}</Badge>
+        {node.score > 0 && <Badge tone={node.score >= 0.7 ? "danger" : node.score >= 0.5 ? "warning" : "neutral"}>score {Math.round(node.score*100)}%</Badge>}
+        {sharedCount > 1 && <Badge tone="danger">shared by {sharedCount}</Badge>}
+      </div>
       <dl>
         <div><dt>Operator</dt><dd>{node.operator}</dd></div>
         <div><dt>Sessions</dt><dd>{number(node.count)}</dd></div>
         <div><dt>Confidence</dt><dd>{Math.round(node.confidence * 100)}%</dd></div>
-        <div><dt>Last seen</dt><dd>{latest ? date(latest.started_at) : "-"}</dd></div>
+        <div><dt>First seen</dt><dd>{node.first_seen ? date(node.first_seen) : "-"}</dd></div>
+        <div><dt>Last seen</dt><dd>{node.last_seen ? date(node.last_seen) : (latest ? date(latest.started_at) : "-")}</dd></div>
+        {imeis.length > 0 && <div><dt>IMEI(s)</dt><dd className="mono" style={{fontSize:11}}>{imeis.join(", ")}</dd></div>}
+        {imsis.length > 0 && <div><dt>IMSI(s)</dt><dd className="mono" style={{fontSize:11}}>{imsis.join(", ")}</dd></div>}
+        {ports.length > 0 && <div><dt>Ports</dt><dd className="mono" style={{fontSize:11}}>{ports.slice(0,8).join(", ")}</dd></div>}
+        {apps.length  > 0 && <div><dt>Apps</dt><dd style={{fontSize:11}}>{apps.slice(0,4).join(", ")}</dd></div>}
       </dl>
-      {node.kind === "source" ? <Button type="button" icon={Target} onClick={onExtract}>Run extraction</Button> : null}
+      {primarySource ? (
+        <div className="graph-inspector-actions">
+          <Button type="button" icon={LocateFixed} variant="secondary" onClick={() => onFocusSource(primarySource)}>Focus</Button>
+          <Button type="button" icon={Target} onClick={() => onExtract(primarySource)}>{isSource ? "Run extraction" : "Extract linked A-party"}</Button>
+        </div>
+      ) : null}
       {latest ? <p className="graph-evidence mono">{latest.source_file} row {latest.row_number}</p> : null}
     </div>
   );
 }
 
-function GraphEdgeInspector({ link }) {
-  const first = link.sessions[0];
+function GraphEdgeInspector({ link, onExtract, onFocusSource }) {
+  const first       = link.sessions?.[0];
+  const nightCount  = link.metadata?.night_sessions ?? 0;
+  const sharedSrcs  = link.metadata?.shared_source_count ?? 1;
+  const destPorts   = link.metadata?.destination_ports ?? [];
+  const linkApps    = link.metadata?.applications?.filter(Boolean) ?? [];
   return (
     <div className="graph-inspector__content">
-      <span className="eyebrow">Connection</span>
-      <h3>{link.sourceId} {"->"} {link.targetId}</h3>
-      <Badge tone={toneForClass(link.classification)}>{link.classification}</Badge>
+      <span className="eyebrow">Connection — why this edge exists</span>
+      <h3 style={{fontSize:13, wordBreak:"break-all"}}>{link.source_id} → {link.target_id}</h3>
+      <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 }}>
+        <Badge tone={toneForClass(link.classification)}>{link.classification}</Badge>
+        {link.score > 0 && <Badge tone={link.score >= 0.7 ? "danger" : link.score >= 0.5 ? "warning" : "neutral"}>score {Math.round(link.score*100)}%</Badge>}
+        {nightCount > 0 && <Badge tone="warning">{nightCount} night sessions</Badge>}
+        {sharedSrcs > 1 && <Badge tone="danger">shared by {sharedSrcs} suspects</Badge>}
+      </div>
       <dl>
         <div><dt>Sessions</dt><dd>{number(link.count)}</dd></div>
-        <div><dt>Total bytes</dt><dd>{number(link.bytes)}</dd></div>
-        <div><dt>Duration</dt><dd>{formatDuration(link.duration)}</dd></div>
         <div><dt>Confidence</dt><dd>{Math.round(link.confidence * 100)}%</dd></div>
+        <div><dt>Total bytes</dt><dd>{number(link.bytes)}</dd></div>
+        <div><dt>Duration</dt><dd>{formatDuration(link.duration_seconds ?? link.duration ?? 0)}</dd></div>
+        <div><dt>First seen</dt><dd>{link.first_seen ? date(link.first_seen) : "-"}</dd></div>
+        <div><dt>Last seen</dt><dd>{link.last_seen ? date(link.last_seen) : "-"}</dd></div>
+        {destPorts.length > 0 && <div><dt>Dest ports</dt><dd className="mono" style={{fontSize:11}}>{destPorts.slice(0,8).join(", ")}</dd></div>}
+        {linkApps.length  > 0 && <div><dt>Apps</dt><dd style={{fontSize:11}}>{linkApps.slice(0,4).join(", ")}</dd></div>}
       </dl>
+      <div className="graph-inspector-actions">
+        <Button type="button" icon={LocateFixed} variant="secondary" onClick={() => onFocusSource(link.source_id ?? link.sourceId)}>Focus A-party</Button>
+        <Button type="button" icon={Target} onClick={() => onExtract(link.source_id ?? link.sourceId)}>Extract source</Button>
+      </div>
+      {/* Evidence rows */}
       <div className="graph-evidence-list">
-        {link.sessions.slice(0, 4).map((session) => (
+        {(link.sessions ?? []).slice(0,4).map(session => (
           <div key={session.id}>
             <strong>{session.operator}</strong>
-            <span className="mono">Dst {formatEndpoint(session.destination_ip, session.destination_port)}</span>
+            <span className="mono">→ {formatEndpoint(session.destination_ip, session.destination_port)}</span>
             <small>{formatEndpoint(session.source_ip, session.source_port)}{session.translated_ip ? ` via ${formatEndpoint(session.translated_ip, session.translated_port)}` : ""}</small>
             <small>{session.source_file} row {session.row_number}</small>
           </div>

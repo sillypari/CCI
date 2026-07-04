@@ -5,6 +5,7 @@ import html
 import io
 import ipaddress
 import json
+import math
 import re
 import sqlite3
 import uuid
@@ -28,7 +29,9 @@ from app.schemas.core import (
     ExtractionCandidate,
     ExtractionRequest,
     ExtractionResult,
+    GraphCluster,
     GraphEdge,
+    GraphInsight,
     GraphMetrics,
     GraphNode,
     ImportSpecCreate,
@@ -1165,6 +1168,7 @@ class EvidenceStore:
         case_id: str | None = None,
         destination_ip: str | None = None,
         imei: str | None = None,
+        imsi: str | None = None,
         app: str | None = None,
         domain: str | None = None,
         cell_id: str | None = None,
@@ -1204,6 +1208,9 @@ class EvidenceStore:
         if imei:
             query += " AND json_extract(payload_json, '$.imei') LIKE ?"
             params.append(f"%{imei}%")
+        if imsi:
+            query += " AND json_extract(payload_json, '$.imsi') LIKE ?"
+            params.append(f"%{imsi}%")
         if app:
             query += " AND (lower(json_extract(payload_json, '$.app_hint')) LIKE ? OR lower(json_extract(payload_json, '$.operator')) LIKE ?)"
             params.extend([f"%{app.lower()}%", f"%{app.lower()}%"])
@@ -1235,7 +1242,7 @@ class EvidenceStore:
             )
             params.extend([needle] * 10)
 
-        bounded_limit = max(1, min(limit, 10_000))
+        bounded_limit = max(1, min(limit, 100_000))
         bounded_offset = max(0, offset)
         query += " ORDER BY started_at DESC LIMIT ? OFFSET ?"
         params.extend([bounded_limit, bounded_offset])
@@ -1388,45 +1395,153 @@ class EvidenceStore:
         limit: int = 250,
         scan_limit: int = 20_000,
         sample_limit: int = 4,
+        focus: str | None = None,
+        focus_type: str = "msisdn",
+        hops: int = 1,
+        started_from: str | None = None,
+        started_to: str | None = None,
+        include_relay: bool = True,
+        min_score: float = 0,
+        rank_by: str = "score",
     ) -> CommunicationGraph:
         normalized_classification = None if classification in (None, "all") else classification
         visible_limit = max(1, min(limit, 5_000))
         scan_cap = max(visible_limit, min(max(scan_limit, 1), 100_000))
         sample_cap = max(1, min(sample_limit, 10))
-        sessions = self.list_sessions(msisdn=msisdn, classification=normalized_classification, case_id=case_id, limit=scan_cap)
+        normalized_focus_type = focus_type if focus_type in {"msisdn", "ip", "endpoint", "imei", "imsi", "any"} else "msisdn"
+        focus_value = (focus or msisdn or "").strip()
+        normalized_hops = max(1, min(hops, 2))
+        score_floor = max(0, min(min_score, 1))
+        normalized_rank_by = rank_by if rank_by in {"score", "volume", "confidence", "recent", "p2p"} else "score"
+
+        def load_slice(value: str | None = None, value_type: str = "any") -> list[SessionRecord]:
+            common = {
+                "classification": normalized_classification,
+                "case_id": case_id,
+                "started_from": started_from,
+                "started_to": started_to,
+                "limit": scan_cap,
+            }
+            if not value:
+                return self.list_sessions(**common)
+            if value_type == "msisdn":
+                return self.list_sessions(msisdn=value, **common)
+            if value_type in {"ip", "endpoint"}:
+                return self.list_sessions(destination_ip=value, **common)
+            if value_type == "imei":
+                return self.list_sessions(imei=value, **common)
+            if value_type == "imsi":
+                return self.list_sessions(imsi=value, **common)
+            return self.list_sessions(q=value, **common)
+
+        primary_sessions = load_slice(focus_value or None, normalized_focus_type)
+        if focus_value and normalized_hops > 1 and primary_sessions:
+            focus_session_ids = {session.id for session in primary_sessions}
+            focus_msisdns = {session.a_party_msisdn for session in primary_sessions}
+            focus_endpoints = {session.destination_ip for session in primary_sessions}
+            pool = load_slice(None)
+            sessions = []
+            seen_ids: set[str] = set()
+            for session in [*primary_sessions, *pool]:
+                if session.id in seen_ids:
+                    continue
+                if session.id in focus_session_ids or session.a_party_msisdn in focus_msisdns or session.destination_ip in focus_endpoints:
+                    seen_ids.add(session.id)
+                    sessions.append(session)
+        else:
+            sessions = primary_sessions
+
+        if not include_relay:
+            sessions = [session for session in sessions if session.classification != "relay"]
+
         nodes: dict[str, dict[str, Any]] = {}
         links: dict[str, dict[str, Any]] = {}
+        source_count_by_target: dict[str, int] = defaultdict(int)
+        target_sources: dict[str, set[str]] = defaultdict(set)
+        sessions_by_source: dict[str, list[SessionRecord]] = defaultdict(list)
+
+        for session in sessions:
+            target_sources[session.destination_ip].add(session.a_party_msisdn)
+            sessions_by_source[session.a_party_msisdn].append(session)
+        for target, sources in target_sources.items():
+            source_count_by_target[target] = len(sources)
 
         def append_sample(target: dict[str, Any], session: SessionRecord) -> None:
             if len(target["sessions"]) < sample_cap:
                 target["sessions"].append(session)
 
+        def application_bucket(session: SessionRecord) -> tuple[str, str, str]:
+            app = (session.app_hint or session.operator or "Unknown").strip()
+            low = app.lower()
+            if "whatsapp" in low or "meta" in low:
+                return "app:meta-whatsapp", "Meta/WhatsApp", "application"
+            if "telegram" in low:
+                return "app:telegram", "Telegram", "application"
+            if "voip" in low or "p2p" in low:
+                return "p2p:direct", "Direct P2P leads", "p2p"
+            if session.classification == "relay":
+                return "relay:platform-noise", "Relay/noise infrastructure", "relay"
+            if session.classification == "unknown":
+                return "unknown:review", "Unknown endpoints", "unknown"
+            operator = (session.operator or "Unknown Network").strip() or "Unknown Network"
+            normalized = re.sub(r"[^a-z0-9]+", "-", operator.lower()).strip("-") or "network"
+            return f"operator:{normalized}", operator, "operator"
+
+        cluster_labels: dict[str, tuple[str, str]] = {"source:a-party": ("A-parties", "source")}
+
+        def cluster_for_node(kind: str, session: SessionRecord) -> str:
+            if kind == "source":
+                return "source:a-party"
+            cluster_id, label, cluster_kind = application_bucket(session)
+            cluster_labels[cluster_id] = (label, cluster_kind)
+            return cluster_id
+
+        def add_metadata_sample(metadata: dict[str, Any], key: str, value: Any, cap: int = 8) -> None:
+            if value in (None, ""):
+                return
+            bucket = metadata.setdefault(key, [])
+            if value not in bucket and len(bucket) < cap:
+                bucket.append(value)
+
         def add_node(node_id: str, kind: str, label: str, title: str, operator: str, session: SessionRecord) -> None:
             total_bytes = session.bytes_up + session.bytes_down
+            cluster_id = cluster_for_node(kind, session)
             existing = nodes.get(node_id)
             if existing is None:
-                nodes[node_id] = {
+                existing = {
                     "id": node_id,
                     "label": label,
                     "title": title,
                     "kind": kind,
                     "operator": operator,
-                    "count": 1,
-                    "bytes": total_bytes,
+                    "count": 0,
+                    "bytes": 0,
                     "confidence": session.confidence,
+                    "score": 0,
+                    "cluster_id": cluster_id,
+                    "first_seen": session.started_at,
                     "last_seen": session.started_at,
-                    "sessions": [session],
+                    "sessions": [],
+                    "metadata": {"ports": [], "apps": [], "imeis": [], "imsis": []},
                 }
-                return
+                nodes[node_id] = existing
             existing["count"] += 1
             existing["bytes"] += total_bytes
             existing["confidence"] = max(existing["confidence"], session.confidence)
+            existing["first_seen"] = min(existing["first_seen"], session.started_at)
             existing["last_seen"] = max(existing["last_seen"], session.started_at)
             append_sample(existing, session)
             if existing["kind"] != "source":
                 existing["kind"] = self._merge_classification(existing["kind"], kind)
             if existing["operator"] != operator:
                 existing["operator"] = "Multiple"
+            if kind == "source":
+                add_metadata_sample(existing["metadata"], "imeis", session.imei)
+                add_metadata_sample(existing["metadata"], "imsis", session.imsi)
+            else:
+                add_metadata_sample(existing["metadata"], "ports", session.destination_port)
+                add_metadata_sample(existing["metadata"], "apps", session.app_hint)
+                existing["metadata"]["source_count"] = source_count_by_target.get(node_id, 1)
 
         for session in sessions:
             add_node(
@@ -1450,31 +1565,75 @@ class EvidenceStore:
             total_bytes = session.bytes_up + session.bytes_down
             existing_link = links.get(link_id)
             if existing_link is None:
-                links[link_id] = {
+                existing_link = {
                     "id": link_id,
                     "source_id": session.a_party_msisdn,
                     "target_id": session.destination_ip,
                     "classification": session.classification,
-                    "count": 1,
-                    "bytes": total_bytes,
-                    "duration_seconds": session.duration_seconds,
+                    "count": 0,
+                    "bytes": 0,
+                    "duration_seconds": 0,
                     "confidence": session.confidence,
-                    "sessions": [session],
+                    "score": 0,
+                    "first_seen": session.started_at,
+                    "last_seen": session.started_at,
+                    "sessions": [],
+                    "metadata": {"destination_ports": [], "source_ports": [], "applications": [], "night_sessions": 0},
                 }
-                continue
+                links[link_id] = existing_link
             existing_link["count"] += 1
             existing_link["bytes"] += total_bytes
             existing_link["duration_seconds"] += session.duration_seconds
             existing_link["confidence"] = max(existing_link["confidence"], session.confidence)
             existing_link["classification"] = self._merge_classification(existing_link["classification"], session.classification)
+            existing_link["first_seen"] = min(existing_link["first_seen"], session.started_at)
+            existing_link["last_seen"] = max(existing_link["last_seen"], session.started_at)
+            if session.started_at.hour >= 23 or session.started_at.hour <= 5:
+                existing_link["metadata"]["night_sessions"] += 1
+            add_metadata_sample(existing_link["metadata"], "destination_ports", session.destination_port)
+            add_metadata_sample(existing_link["metadata"], "source_ports", session.source_port)
+            add_metadata_sample(existing_link["metadata"], "applications", session.app_hint)
             append_sample(existing_link, session)
 
         classification_rank = {"p2p": 2, "unknown": 1, "relay": 0}
-        top_links = sorted(
-            links.values(),
-            key=lambda item: (item["count"], classification_rank.get(item["classification"], 0), item["bytes"], item["confidence"]),
-            reverse=True,
-        )[:visible_limit]
+        class_weight = {"p2p": 0.25, "unknown": 0.14, "relay": 0.04}
+
+        def edge_score(edge: dict[str, Any]) -> float:
+            shared_sources = max(source_count_by_target.get(edge["target_id"], 1) - 1, 0)
+            count_score = min(math.log1p(edge["count"]) / math.log1p(40), 1) * 0.22
+            bytes_score = min(math.log1p(edge["bytes"]) / math.log1p(500_000_000), 1) * 0.08
+            duration_score = min(math.log1p(edge["duration_seconds"]) / math.log1p(14_400), 1) * 0.08
+            confidence_score = edge["confidence"] * 0.24
+            shared_score = min(shared_sources / 4, 1) * 0.11
+            night_score = 0.05 if edge["metadata"].get("night_sessions", 0) else 0
+            repeat_score = 0.05 if edge["count"] >= 3 else 0
+            return round(min(0.99, count_score + bytes_score + duration_score + confidence_score + class_weight.get(edge["classification"], 0.08) + shared_score + night_score + repeat_score), 3)
+
+        for edge in links.values():
+            edge["metadata"]["shared_source_count"] = source_count_by_target.get(edge["target_id"], 1)
+            edge["score"] = edge_score(edge)
+
+        incident_scores: dict[str, float] = defaultdict(float)
+        for edge in links.values():
+            incident_scores[edge["source_id"]] = max(incident_scores[edge["source_id"]], edge["score"])
+            incident_scores[edge["target_id"]] = max(incident_scores[edge["target_id"]], edge["score"])
+        for node in nodes.values():
+            volume_score = min(math.log1p(node["count"]) / math.log1p(80), 1) * 0.24
+            node["score"] = round(min(0.99, max(incident_scores.get(node["id"], 0), volume_score + node["confidence"] * 0.34)), 3)
+
+        def rank_key(edge: dict[str, Any]) -> tuple[Any, ...]:
+            if normalized_rank_by == "volume":
+                return (edge["count"], edge["bytes"], edge["score"], edge["confidence"])
+            if normalized_rank_by == "confidence":
+                return (edge["confidence"], edge["score"], edge["count"], edge["bytes"])
+            if normalized_rank_by == "recent":
+                return (edge["last_seen"], edge["score"], edge["count"])
+            if normalized_rank_by == "p2p":
+                return (classification_rank.get(edge["classification"], 0), edge["score"], edge["count"], edge["bytes"])
+            return (edge["score"], edge["count"], edge["bytes"], edge["confidence"])
+
+        ranked_links = sorted((edge for edge in links.values() if edge["score"] >= score_floor), key=rank_key, reverse=True)
+        top_links = ranked_links[:visible_limit]
         visible_node_ids = {link["source_id"] for link in top_links} | {link["target_id"] for link in top_links}
         node_models = [GraphNode.model_validate(item) for item in nodes.values() if item["id"] in visible_node_ids]
         link_models = [GraphEdge.model_validate(item) for item in top_links]
@@ -1486,11 +1645,70 @@ class EvidenceStore:
                     continue
                 seen_session_ids.add(session.id)
                 visible_sessions.append(session)
+
+        clusters_by_id: dict[str, dict[str, Any]] = {}
+        visible_nodes_by_id = {node.id: node for node in node_models}
+        for node in node_models:
+            cluster_id = node.cluster_id or "unknown:review"
+            label, kind = cluster_labels.get(cluster_id, (cluster_id, "unknown"))
+            clusters_by_id.setdefault(cluster_id, {"id": cluster_id, "label": label, "kind": kind, "nodes": 0, "edges": 0, "sessions": 0, "score": 0})
+            clusters_by_id[cluster_id]["nodes"] += 1
+            clusters_by_id[cluster_id]["sessions"] += node.count
+            clusters_by_id[cluster_id]["score"] = max(clusters_by_id[cluster_id]["score"], node.score)
+        for link in link_models:
+            target_cluster = visible_nodes_by_id.get(link.target_id).cluster_id if visible_nodes_by_id.get(link.target_id) else None
+            if target_cluster and target_cluster in clusters_by_id:
+                clusters_by_id[target_cluster]["edges"] += 1
+                clusters_by_id[target_cluster]["score"] = max(clusters_by_id[target_cluster]["score"], link.score)
+        clusters = sorted((GraphCluster.model_validate(item) for item in clusters_by_id.values()), key=lambda item: (item.score, item.sessions), reverse=True)
+
+        source_nodes = sorted((node for node in node_models if node.kind == "source"), key=lambda node: (node.score, node.count), reverse=True)
+        endpoint_nodes = sorted((node for node in node_models if node.kind != "source"), key=lambda node: (node.score, node.count), reverse=True)
+        insights: list[GraphInsight] = []
+        if source_nodes:
+            top_source = source_nodes[0]
+            insights.append(GraphInsight(
+                id=f"top-source:{top_source.id}",
+                insight_type="ranked_source",
+                severity="medium" if top_source.score >= 0.65 else "low",
+                title="Highest priority A-party",
+                description="This source has the strongest visible combination of confidence, volume, repeat activity, and endpoint quality.",
+                entities={"msisdn": top_source.id, "sessions": top_source.count},
+                score=top_source.score,
+            ))
+        shared_endpoint = next((node for node in endpoint_nodes if (node.metadata or {}).get("source_count", 1) > 1), None)
+        if shared_endpoint:
+            insights.append(GraphInsight(
+                id=f"shared-endpoint:{shared_endpoint.id}",
+                insight_type="shared_endpoint",
+                severity="high" if shared_endpoint.metadata.get("source_count", 1) >= 3 else "medium",
+                title="Endpoint shared across A-parties",
+                description="Multiple source MSISDNs touched this endpoint inside the current graph slice.",
+                entities={"endpoint": shared_endpoint.id, "source_count": shared_endpoint.metadata.get("source_count", 1)},
+                score=shared_endpoint.score,
+            ))
+        top_relay = next((link for link in link_models if link.classification == "relay"), None)
+        if top_relay:
+            insights.append(GraphInsight(
+                id=f"relay-watch:{top_relay.id}",
+                insight_type="relay_watch",
+                severity="low" if top_relay.score < 0.55 else "medium",
+                title="Relay/noise concentration",
+                description="Relay-heavy traffic may obscure real B-party leads and should be hidden when searching for direct contacts.",
+                entities={"source": top_relay.source_id, "endpoint": top_relay.target_id, "sessions": top_relay.count},
+                score=top_relay.score,
+            ))
+
         seen_times = [session.started_at for session in sessions]
         metrics = GraphMetrics(
             nodes=len(node_models),
             edges=len(link_models),
             sessions=len(sessions),
+            scanned_sessions=len(primary_sessions),
+            omitted_edges=max(0, len(ranked_links) - len(top_links)) + max(0, len(links) - len(ranked_links)),
+            omitted_nodes=max(0, len(nodes) - len(visible_node_ids)),
+            total_sources=len({session.a_party_msisdn for session in sessions}),
+            total_endpoints=len({session.destination_ip for session in sessions}),
             p2p=sum(1 for session in sessions if session.classification == "p2p"),
             relay=sum(1 for session in sessions if session.classification == "relay"),
             unknown=sum(1 for session in sessions if session.classification == "unknown"),
@@ -1498,7 +1716,21 @@ class EvidenceStore:
             first_seen=min(seen_times) if seen_times else None,
             last_seen=max(seen_times) if seen_times else None,
         )
-        return CommunicationGraph(nodes=node_models, links=link_models, sessions=visible_sessions, metrics=metrics)
+        view = {
+            "mode": "focused" if focus_value else "ranked_overview",
+            "focus": focus_value or None,
+            "focus_type": normalized_focus_type,
+            "hops": normalized_hops,
+            "limit": visible_limit,
+            "scan_limit": scan_cap,
+            "rank_by": normalized_rank_by,
+            "min_score": score_floor,
+            "include_relay": include_relay,
+            "started_from": started_from,
+            "started_to": started_to,
+            "generated_at": now_ist().isoformat(),
+        }
+        return CommunicationGraph(nodes=node_models, links=link_models, sessions=visible_sessions, metrics=metrics, clusters=clusters, insights=insights, view=view)
     def suspicious_patterns(self, limit: int = 50) -> list[SuspiciousPattern]:
         with self._lock:
             sessions = self.list_sessions(limit=20_000)
@@ -2030,10 +2262,10 @@ class EvidenceStore:
             self._save()
         return self.persistence_status()
 
-    def export_graph_json(self, msisdn: str | None = None, classification: str | None = None, case_id: str | None = None, limit: int = 5_000) -> str:
-        return self.communication_graph(msisdn=msisdn, classification=classification, case_id=case_id, limit=limit).model_dump_json(indent=2)
+    def export_graph_json(self, msisdn: str | None = None, focus: str | None = None, focus_type: str = 'msisdn', classification: str | None = None, case_id: str | None = None, limit: int = 5_000, hops: int = 1, include_relay: bool = True, min_score: float = 0.0, rank_by: str = 'score', started_from: str | None = None, started_to: str | None = None) -> str:
+        return self.communication_graph(msisdn=msisdn, focus=focus, focus_type=focus_type, classification=classification, case_id=case_id, limit=limit, hops=hops, include_relay=include_relay, min_score=min_score, rank_by=rank_by, started_from=started_from, started_to=started_to).model_dump_json(indent=2)
 
-    def export_graph_graphml(self, msisdn: str | None = None, classification: str | None = None, case_id: str | None = None, limit: int = 5_000) -> str:
+    def export_graph_graphml(self, msisdn: str | None = None, focus: str | None = None, focus_type: str = 'msisdn', classification: str | None = None, case_id: str | None = None, limit: int = 5_000, hops: int = 1, include_relay: bool = True, min_score: float = 0.0, rank_by: str = 'score', started_from: str | None = None, started_to: str | None = None) -> str:
         graph = self.communication_graph(msisdn=msisdn, classification=classification, case_id=case_id, limit=limit)
         lines = [
             '<?xml version="1.0" encoding="UTF-8"?>',

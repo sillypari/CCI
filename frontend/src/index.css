@@ -2438,6 +2438,112 @@ tbody tr:hover {
   color: var(--color-text-primary);
   font-weight: 700;
 }
+.graph-inspector-note {
+  margin: -4px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.graph-inspector-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.graph-inspector-actions .button {
+  justify-content: center;
+  min-width: 0;
+  padding-inline: 10px;
+}
+
+.graph-insight-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line-firm);
+  border-radius: 10px;
+  background: #f7fafc;
+}
+
+.graph-insight-panel > strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+.graph-insight-panel.danger {
+  border-color: rgba(214, 76, 74, 0.18);
+  background: #fff7f7;
+}
+
+.graph-insight-list {
+  display: grid;
+  gap: 8px;
+}
+
+.graph-insight-list.compact {
+  gap: 6px;
+}
+
+.graph-insight-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.graph-insight-row button,
+.graph-row-action {
+  min-width: 0;
+  border: 0;
+  border-radius: 8px;
+  background: #eef3f7;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.graph-insight-row button:first-child {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.graph-insight-row button:first-child:hover,
+.graph-row-action:hover {
+  background: var(--surface-selected-firm);
+}
+
+.graph-row-action {
+  padding: 0 10px;
+  color: var(--brand-ink);
+  font-weight: 800;
+}
+
+.graph-insight-row span,
+.graph-insight-stat span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-insight-row small,
+.graph-insight-stat small,
+.graph-muted {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.graph-insight-stat {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #ffffff;
+}
 
 .graph-evidence,
 .graph-empty-inspector {
@@ -3640,3 +3746,123 @@ tbody tr:hover {
 .network-workspace.is-dense .graph-node.source .graph-node-title {
   font-size: 9px;
 }
+
+/* ── Investigation Cockpit controls ─────────────────────────── */
+.map-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  padding: 0 8px;
+  height: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--panel-bg);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.map-toggle:hover { background: var(--color-bg-tertiary); color: var(--color-text-primary); }
+.map-toggle input[type="checkbox"] { accent-color: var(--color-brand); }
+
+.map-score-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+.map-score-filter input[type="range"] {
+  width: 72px;
+  accent-color: var(--color-brand);
+}
+.map-date {
+  display: inline-flex;
+  align-items: center;
+}
+.map-date input[type="date"] {
+  font-size: 11px;
+  padding: 0 6px;
+  height: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--panel-bg);
+  color: var(--color-text-primary);
+}
+
+/* ── Insight bar (server-generated leads) ───────────────────── */
+.graph-insights-bar {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-border-subtle);
+  scrollbar-width: none;
+}
+.graph-insight-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--panel-bg);
+  white-space: nowrap;
+  font-size: 12px;
+}
+.graph-insight-chip.high   { border-color: rgba(214,76,74,0.3); background: rgba(214,76,74,0.05); }
+.graph-insight-chip.medium { border-color: rgba(230,160,30,0.3); background: rgba(230,160,30,0.05); }
+.graph-insight-chip__title { font-weight: 600; color: var(--color-text-primary); }
+.graph-insight-chip__desc  { color: var(--color-text-muted); font-size: 11px; }
+
+/* ── Cluster summary bar ────────────────────────────────────── */
+.graph-clusters-bar {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-border-subtle);
+  scrollbar-width: none;
+}
+.graph-cluster-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--panel-bg);
+  white-space: nowrap;
+  font-size: 11px;
+  min-width: 120px;
+}
+.graph-cluster-chip.focused { border-color: var(--color-brand); background: rgba(99,102,241,0.06); }
+.graph-cluster-chip__label { font-weight: 600; color: var(--color-text-primary); font-size: 12px; }
+.graph-cluster-chip__meta  { color: var(--color-text-muted); }
+
+/* ── Inspector panel upgrades ───────────────────────────────── */
+.graph-mini-metrics {
+  display: flex;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--color-border-subtle);
+  margin-bottom: 12px;
+}
+.graph-mini-metrics > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.graph-mini-metrics span { font-size: 10px; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.graph-mini-metrics strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+.graph-mini-metrics strong.success { color: var(--color-success); }
+.graph-mini-metrics strong.muted   { color: var(--color-text-muted); }
+
+.graph-insight-panel.success { border-left: 3px solid var(--color-success); padding-left: 8px; }
+.graph-insight-panel.warning { border-left: 3px solid var(--color-warning); padding-left: 8px; }
+
+.graph-insight-stat small { font-size: 10px; color: var(--color-text-muted); display: block; margin-top: 1px; }
