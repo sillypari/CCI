@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Logo.png" width="140" alt="Pramaan IPDR Logo"/>
+  <img src="Logo.png" width="180" alt="Pramaan IPDR Logo"/>
 </p>
 
 <h1 align="center">Pramaan IPDR</h1>
