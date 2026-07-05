@@ -3539,23 +3539,25 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
     const ctx = canvas.getContext("2d");
 
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = VIEW_WIDTH * dpr;
-    canvas.width = VIEW_WIDTH * dpr;
-    canvas.height = VIEW_HEIGHT * dpr;
-    canvas.style.width = "100%";
-    canvas.style.height = "100%";
+    canvas.width = Math.round(VIEW_WIDTH * dpr);
+    canvas.height = Math.round(VIEW_HEIGHT * dpr);
+    canvas.style.width = `${VIEW_WIDTH}px`;
+    canvas.style.height = `${VIEW_HEIGHT}px`;
     ctx.scale(dpr, dpr);
 
     ctx.clearRect(0, 0, VIEW_WIDTH, VIEW_HEIGHT);
 
     ctx.save();
-    ctx.translate(pan.x, pan.y);
+    ctx.translate(Math.round(pan.x), Math.round(pan.y));
     ctx.scale(zoom, zoom);
 
     graph.links.forEach((link) => {
-      const source = positions.get(link.sourceId ?? link.source_id);
-      const target = positions.get(link.targetId ?? link.target_id);
-      if (!source || !target) return;
+      const sourceRaw = positions.get(link.sourceId ?? link.source_id);
+      const targetRaw = positions.get(link.targetId ?? link.target_id);
+      if (!sourceRaw || !targetRaw) return;
+
+      const source = { x: Math.round(sourceRaw.x), y: Math.round(sourceRaw.y) };
+      const target = { x: Math.round(targetRaw.x), y: Math.round(targetRaw.y) };
 
       const isSelected = selectedEdge?.id === link.id;
       
@@ -3627,7 +3629,8 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
     });
 
     graph.nodes.forEach((node) => {
-      const pos = positions.get(node.id) ?? node;
+      const posRaw = positions.get(node.id) ?? node;
+      const pos = { x: Math.round(posRaw.x), y: Math.round(posRaw.y) };
       const isSelected = selectedNode?.id === node.id;
       const isHovered = hoveredNodeId === node.id;
       const visual = graphNodeVisual(node, visualScale, layoutMode === "sankey");
