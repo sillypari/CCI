@@ -132,6 +132,7 @@ function App() {
   const [apiLive, setApiLive] = useState(false);
   const [apiError, setApiError] = useState("");
   const [toasts, setToasts] = useState([]);
+  const [isServerActive, setIsServerActive] = useState(false);
 
   const pushToast = useCallback((kind, title, body) => {
     const id = crypto.randomUUID();
@@ -174,8 +175,39 @@ function App() {
     refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    let timer = null;
+
+    const poll = async () => {
+      try {
+        const jobsList = await api.uploadJobs();
+        setData((current) => ({ ...current, jobs: jobsList }));
+        
+        const hasActive = jobsList.some((j) => j.status === "processing" || j.status === "pending");
+        if (!hasActive) {
+          const [statsList, uploadsList] = await Promise.all([api.dashboard(), api.uploads()]);
+          setData((current) => ({ ...current, stats: statsList, uploads: uploadsList }));
+        }
+      } catch (err) {
+        console.error("Polling jobs failed:", err);
+      }
+    };
+
+    const hasActiveJob = isServerActive || data.jobs.some((j) => j.status === "processing" || j.status === "pending");
+    if (hasActiveJob) {
+      timer = setInterval(poll, 1500);
+    } else {
+      timer = setInterval(poll, 6000);
+    }
+
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [data.jobs, isServerActive]);
+
   const uploadFile = useCallback(
     async (file, options = {}) => {
+      setIsServerActive(true);
       try {
         const upload = await api.upload(file, options);
         pushToast(upload.status === "failed" ? "warning" : "success", upload.status === "failed" ? "Upload quarantined" : "Upload processed", upload.message ?? file.name);
@@ -186,6 +218,8 @@ function App() {
         setApiError(error.message);
         pushToast("error", "Upload failed", error.message);
         return false;
+      } finally {
+        setIsServerActive(false);
       }
     },
     [pushToast, refresh]
@@ -223,6 +257,7 @@ function App() {
 
   const validateFile = useCallback(
     async (file, options = {}) => {
+      setIsServerActive(true);
       try {
         const report = await api.validateUpload(file, options);
         const missing = report.missing_required?.length ? `Missing ${report.missing_required.join(", ")}` : "Required fields detected";
@@ -233,6 +268,8 @@ function App() {
         setApiError(error.message);
         pushToast("error", "Validation failed", error.message);
         return null;
+      } finally {
+        setIsServerActive(false);
       }
     },
     [pushToast]
