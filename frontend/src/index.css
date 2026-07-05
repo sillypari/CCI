@@ -491,6 +491,10 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   font-weight: inherit !important;
 }
 
+.button svg {
+  color: inherit !important;
+}
+
 .button.primary {
   background: var(--color-brand);
   color: white;

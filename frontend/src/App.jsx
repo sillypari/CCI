@@ -129,6 +129,7 @@ const initialState = {
 };
 
 function App() {
+  const navigate = useNavigate();
   const [data, setData] = useState(initialState);
   const [apiLive, setApiLive] = useState(false);
   const [apiError, setApiError] = useState("");
@@ -328,6 +329,7 @@ function App() {
         setApiLive(true);
         setApiError("");
         pushToast("success", "Extraction complete", `${extraction.actionable_count} actionable candidates found`);
+        navigate("/extractions");
         return extraction;
       } catch (error) {
         setApiError(error.message);
@@ -335,7 +337,7 @@ function App() {
         return null;
       }
     },
-    [pushToast]
+    [pushToast, navigate]
   );
 
 
