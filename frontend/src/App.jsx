@@ -3660,9 +3660,9 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
       const drawStrokeWidth = strokeWidth / zoom;
 
       if (node.kind === "source") {
-        const w = visual.width;
-        const h = visual.height;
-        const r = Math.min(8, w * 0.28);
+        const w = visual.width / zoom;
+        const h = visual.height / zoom;
+        const r = Math.min(8 / zoom, w * 0.28);
         
         ctx.save();
         ctx.beginPath();
@@ -3687,20 +3687,20 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
 
         // Draw smartphone speaker slot and home button details
         ctx.beginPath();
-        ctx.moveTo(pos.x - w / 4, pos.y - h / 2 + 4);
-        ctx.lineTo(pos.x + w / 4, pos.y - h / 2 + 4);
+        ctx.moveTo(pos.x - w / 4, pos.y - h / 2 + 4 / zoom);
+        ctx.lineTo(pos.x + w / 4, pos.y - h / 2 + 4 / zoom);
         ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
         ctx.lineWidth = 1.3 / zoom;
         ctx.stroke();
 
         ctx.beginPath();
-        ctx.arc(pos.x, pos.y + h / 2 - 5, 2.2, 0, Math.PI * 2);
+        ctx.arc(pos.x, pos.y + h / 2 - 5 / zoom, 2.2 / zoom, 0, Math.PI * 2);
         ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
         ctx.fill();
 
         ctx.restore();
       } else {
-        const r = visual.radius;
+        const r = visual.radius / zoom;
         ctx.save();
         ctx.beginPath();
         ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
@@ -3715,9 +3715,11 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
         ctx.restore();
       }
 
+      const r = visual.radius / zoom;
+
       // Always draw inside glyphs for server & tower nodes if size fits
-      if (visual.radius >= 6 && zoom > 0.35) {
-        const glyphSize = visual.radius * 1.15;
+      if (r >= 6 && zoom > 0.35) {
+        const glyphSize = r * 1.15;
         if (node.kind === "p2p" || (node.kind !== "source" && node.kind !== "relay" && node.kind !== "unknown")) {
           drawServerIcon(ctx, pos.x, pos.y, glyphSize);
         } else if (node.kind === "relay") {
@@ -3726,7 +3728,6 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
       }
 
       if (node.score >= 0.7 && node.kind !== "source") {
-        const r = visual.radius || visual.width / 2;
         const badgeX = pos.x + r * 0.7;
         const badgeY = pos.y + r * 0.7;
         drawShieldWarningBadge(ctx, badgeX, badgeY, r * 0.6);
