@@ -3198,11 +3198,33 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
 
   const positions = useMemo(() => {
     const map = new Map();
+    
+    let sumX = 0, sumY = 0, count = 0;
     graph.nodes.forEach((node) => {
-      map.set(node.id, manualPositions[node.id] ?? layoutPositions.get(node.id) ?? { x: node.x, y: node.y });
+      const pos = manualPositions[node.id] ?? layoutPositions.get(node.id) ?? { x: node.x, y: node.y };
+      sumX += pos.x;
+      sumY += pos.y;
+      count++;
+    });
+    
+    const centerX = count > 0 ? sumX / count : VIEW_WIDTH / 2;
+    const centerY = count > 0 ? sumY / count : VIEW_HEIGHT / 2;
+    
+    const spreadFactor = zoom > 1 ? 1.0 + (zoom - 1.0) * 0.45 : 1.0;
+    
+    graph.nodes.forEach((node) => {
+      const basePos = manualPositions[node.id] ?? layoutPositions.get(node.id) ?? { x: node.x, y: node.y };
+      if (manualPositions[node.id]) {
+        map.set(node.id, basePos);
+      } else {
+        map.set(node.id, {
+          x: centerX + (basePos.x - centerX) * spreadFactor,
+          y: centerY + (basePos.y - centerY) * spreadFactor
+        });
+      }
     });
     return map;
-  }, [graph.nodes, manualPositions, layoutPositions]);
+  }, [graph.nodes, manualPositions, layoutPositions, zoom, VIEW_WIDTH, VIEW_HEIGHT]);
 
   const getRawPointFromClient = useCallback((clientX, clientY) => {
     const canvas = realCanvasRef.current;
@@ -3456,7 +3478,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
   const fitGraph = useCallback((options = {}) => {
     if (!graph.nodes.length) return;
 
-    const bounds = graphBoundsForPositions(graph.nodes, positions, visualScale, layoutMode);
+    const bounds = graphBoundsForPositions(graph.nodes, layoutPositions, visualScale, layoutMode);
     if (!bounds) return;
 
     const padding = options.padding ?? Math.max(72, Math.min(VIEW_WIDTH, VIEW_HEIGHT) * 0.1);
@@ -3475,7 +3497,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
       x: VIEW_WIDTH / 2 - centerX * nextZoom,
       y: VIEW_HEIGHT / 2 - centerY * nextZoom
     });
-  }, [VIEW_WIDTH, VIEW_HEIGHT, graph.nodes, positions, visualScale, layoutMode]);
+  }, [VIEW_WIDTH, VIEW_HEIGHT, graph.nodes, layoutPositions, visualScale, layoutMode]);
 
   const [fitRequest, setFitRequest] = useState(0);
 
@@ -3654,24 +3676,8 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
         ctx.fill();
         ctx.stroke();
 
-        ctx.beginPath();
-        const iconX = pos.x - w / 2 + 10;
-        const iconY = pos.y;
-        const iw = 6;
-        const ih = 10;
-        if (ctx.roundRect) {
-          ctx.roundRect(iconX - iw / 2, iconY - ih / 2, iw, ih, 1.5);
-        } else {
-          ctx.rect(iconX - iw / 2, iconY - ih / 2, iw, ih);
-        }
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.75)";
-        ctx.lineWidth = 1 / zoom;
-        ctx.stroke();
-        
-        ctx.beginPath();
-        ctx.arc(iconX, iconY + ih / 2 - 2, 0.5, 0, Math.PI * 2);
-        ctx.fillStyle = "rgba(255, 255, 255, 0.75)";
-        ctx.fill();
+        // Draw smartphone using authentic drawPhoneIcon on the left of the label!
+        drawPhoneIcon(ctx, pos.x - w / 2 + 11, pos.y, 13);
 
         ctx.restore();
       } else {
@@ -3690,9 +3696,9 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
         ctx.restore();
       }
 
-      const hideGlyphs = denseGraph;
-      if (!hideGlyphs && visual.radius >= 8 && zoom > 0.55) {
-        const glyphSize = visual.radius * 0.9;
+      // Always draw inside glyphs for server & tower nodes if size fits
+      if (visual.radius >= 6 && zoom > 0.35) {
+        const glyphSize = visual.radius * 1.15;
         if (node.kind === "p2p" || (node.kind !== "source" && node.kind !== "relay" && node.kind !== "unknown")) {
           drawServerIcon(ctx, pos.x, pos.y, glyphSize);
         } else if (node.kind === "relay") {
