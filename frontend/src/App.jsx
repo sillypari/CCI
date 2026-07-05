@@ -1515,19 +1515,21 @@ function ExtractionsPage({ extractions = [], runExtraction }) {
           <Button icon={Play} disabled={busy || !msisdn.trim()}>{busy ? "Running" : "Run extraction"}</Button>
         </form>
       </section>
-      <section className="panel span-8" style={{ position: "relative" }}>
+      <section className="panel span-8" style={{ position: "relative", maxHeight: "calc(100vh - 120px)", display: "flex", flexDirection: "column" }}>
         <PanelHeader icon={ShieldCheck} title="Latest Result" action={latest ? <Badge tone="success">{latest.actionable_count} actionable</Badge> : null} />
-        {busy ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '350px', gap: '16px' }}>
-            <Loader2 size={32} className="animate-spin" style={{ color: 'var(--color-brand)' }} />
-            <div style={{ fontSize: '14px', fontWeight: '500' }}>Running B-Party extraction and network mapping...</div>
-            <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>This may take a moment for large datasets.</div>
-          </div>
-        ) : latest ? (
-          <ExtractionResultView extraction={latest} />
-        ) : (
-          <EmptyState label="No extraction has been run" />
-        )}
+        <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
+          {busy ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '350px', gap: '16px' }}>
+              <Loader2 size={32} className="animate-spin" style={{ color: 'var(--color-brand)' }} />
+              <div style={{ fontSize: '14px', fontWeight: '500' }}>Running B-Party extraction and network mapping...</div>
+              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>This may take a moment for large datasets.</div>
+            </div>
+          ) : latest ? (
+            <ExtractionResultView extraction={latest} />
+          ) : (
+            <EmptyState label="No extraction has been run" />
+          )}
+        </div>
       </section>
     </motion.section>
   );
