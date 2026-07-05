@@ -241,6 +241,7 @@ class EvidenceStore:
             with connection:
                 connection.execute("PRAGMA journal_mode=WAL")
                 connection.execute("PRAGMA synchronous=NORMAL")
+                connection.execute("PRAGMA cache_size=-64000")
                 connection.execute(
                     "CREATE TABLE IF NOT EXISTS sessions ("
                     "id TEXT PRIMARY KEY, "
@@ -342,6 +343,7 @@ class EvidenceStore:
                     with connection:
                         connection.execute("PRAGMA journal_mode=WAL")
                         connection.execute("PRAGMA synchronous=NORMAL")
+                        connection.execute("PRAGMA cache_size=-64000")
                         connection.executemany(
                             "INSERT OR IGNORE INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                             [
@@ -859,6 +861,7 @@ class EvidenceStore:
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA synchronous=NORMAL")
+            connection.execute("PRAGMA cache_size=-64000")
             with connection:
                 connection.executemany(
                     "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -2379,6 +2382,7 @@ class EvidenceStore:
         try:
             with connection:
                 connection.execute("PRAGMA journal_mode=WAL")
+                connection.execute("PRAGMA cache_size=-64000")
                 connection.execute("CREATE TABLE IF NOT EXISTS cases (id TEXT PRIMARY KEY, name TEXT, crime_type TEXT, status TEXT, updated_at TEXT, payload_json TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS uploads (id TEXT PRIMARY KEY, filename TEXT, case_id TEXT, status TEXT, rows_total INTEGER, rows_valid INTEGER, rows_quarantined INTEGER, created_at TEXT, payload_json TEXT NOT NULL)")
                 connection.execute("CREATE TABLE IF NOT EXISTS ingestion_jobs (id TEXT PRIMARY KEY, upload_id TEXT, filename TEXT, case_id TEXT, status TEXT, progress INTEGER, created_at TEXT, completed_at TEXT, payload_json TEXT NOT NULL)")
