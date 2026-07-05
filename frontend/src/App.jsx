@@ -206,6 +206,10 @@ function App() {
     };
   }, [data.jobs, isServerActive]);
 
+  const setJobs = useCallback((jobsList) => {
+    setData((current) => ({ ...current, jobs: jobsList }));
+  }, []);
+
   const uploadFile = useCallback(
     async (file, options = {}) => {
       setIsServerActive(true);
@@ -367,7 +371,7 @@ function App() {
           <Routes>
             <Route path="/" element={<DashboardPage data={data} />} />
             <Route path="/cases" element={<CasesPage cases={data.cases} stats={data.stats} createCase={createCase} deleteCase={deleteCase} />} />
-            <Route path="/uploads" element={<UploadsPage uploads={data.uploads} jobs={data.jobs} cases={data.cases} importSpecs={data.importSpecs} uploadFile={uploadFile} validateFile={validateFile} deleteUpload={deleteUpload} />} />
+            <Route path="/uploads" element={<UploadsPage uploads={data.uploads} jobs={data.jobs} cases={data.cases} importSpecs={data.importSpecs} uploadFile={uploadFile} validateFile={validateFile} deleteUpload={deleteUpload} setJobs={setJobs} />} />
             <Route path="/sessions" element={<SessionsPage sessions={data.sessions} />} />
             <Route path="/extractions" element={<ExtractionsPage extractions={data.extractions} runExtraction={runExtraction} />} />
             <Route path="/map" element={<MapPage runExtraction={runExtraction} sessionCount={data.stats.sessions} />} />
@@ -737,7 +741,7 @@ function CasesPage({ cases = [], stats = {}, createCase, deleteCase }) {
     </motion.section>
   );
 }
-function UploadsPage({ uploads = [], jobs = [], cases = [], importSpecs = [], uploadFile, validateFile, deleteUpload }) {
+function UploadsPage({ uploads = [], jobs = [], cases = [], importSpecs = [], uploadFile, validateFile, deleteUpload, setJobs }) {
   const [activeFile, setActiveFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [selectedQuarantine, setSelectedQuarantine] = useState(null);
