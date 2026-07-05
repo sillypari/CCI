@@ -824,6 +824,9 @@ class EvidenceStore:
             # Progressive row logging (5% increments) in memory
             if row_number % chunk_log == 0 or row_number == len(rows):
                 with self._lock:
+                    active_job = next((j for j in self.jobs if j.id == job.id), None)
+                    if active_job is None:
+                        raise IngestionError("Ingestion terminated by user")
                     for j in self.jobs:
                         if j.id == job.id:
                             j.progress = int(5 + 90 * (row_number / len(rows)))

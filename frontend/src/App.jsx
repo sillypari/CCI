@@ -52,7 +52,8 @@ import {
   ZoomOut,
   Layers,
   Maximize2,
-  Minimize2
+  Minimize2,
+  XCircle
 } from "lucide-react";
 import { api } from "./api/client.js";
 
@@ -1042,7 +1043,36 @@ function UploadsPage({ uploads = [], jobs = [], cases = [], importSpecs = [], up
                       <Badge tone={job.status === "completed" ? "success" : job.status === "failed" ? "danger" : "warning"}>
                         {job.progress}%
                       </Badge>
-                      {!isWorking && (
+                      {isWorking ? (
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            if (window.confirm(`Are you sure you want to terminate ingestion for ${job.filename}?`)) {
+                              try {
+                                await api.deleteJob(job.id);
+                                const updatedJobs = await api.uploadJobs();
+                                setJobs(updatedJobs);
+                              } catch (err) {
+                                console.error("Failed to terminate job:", err);
+                              }
+                            }
+                          }}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            color: "var(--color-danger)",
+                            cursor: "pointer",
+                            padding: "2px",
+                            borderRadius: "4px",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center"
+                          }}
+                          title="Terminate active ingestion job"
+                        >
+                          <XCircle size={14} />
+                        </button>
+                      ) : (
                         <button
                           onClick={async (e) => {
                             e.stopPropagation();
