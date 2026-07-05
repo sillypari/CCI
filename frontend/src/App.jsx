@@ -2489,11 +2489,11 @@ function graphVisualScale(width, height, nodeCount, linkCount) {
 
 function graphNodeVisual(node, visualScale, isSankey = false) {
   if (node.kind === "source") {
-    const baseRadius = 26 * visualScale;
+    const baseRadius = (isSankey ? 22 : 28) * visualScale;
     const charCount = String(node.label).length;
-    const w = Math.max(baseRadius * 2.2, charCount * 8.0 * visualScale);
-    const h = baseRadius * 1.25;
-    return { width: w, height: h };
+    const w = Math.max(baseRadius * 1.35, charCount * 7.5 * visualScale);
+    const h = baseRadius * 1.95;
+    return { width: w, height: h, radius: baseRadius };
   }
   const baseRadius = (node.kind === "p2p" ? 18 : 14) * visualScale;
   const r = isSankey ? baseRadius * 0.8 : baseRadius;
@@ -3210,7 +3210,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
     const centerX = count > 0 ? sumX / count : VIEW_WIDTH / 2;
     const centerY = count > 0 ? sumY / count : VIEW_HEIGHT / 2;
     
-    const spreadFactor = zoom > 1 ? 1.0 + (zoom - 1.0) * 0.45 : 1.0;
+    const spreadFactor = zoom > 1 ? 1.0 + (zoom - 1.0) * 1.25 : 1.0;
     
     graph.nodes.forEach((node) => {
       const basePos = manualPositions[node.id] ?? layoutPositions.get(node.id) ?? { x: node.x, y: node.y };
@@ -3235,7 +3235,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
       x: ((clientX - rect.left) / rect.width) * VIEW_WIDTH,
       y: ((clientY - rect.top) / rect.height) * VIEW_HEIGHT
     };
-  }, []);
+  }, [VIEW_WIDTH, VIEW_HEIGHT]);
 
   const zoomToPoint = useCallback((nextZoom, rawPoint, baseZoom = zoom, basePan = pan) => {
     const graphX = (rawPoint.x - basePan.x) / baseZoom;
@@ -3336,15 +3336,18 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
       if (node.kind === "source") {
         const w = visual.width;
         const h = visual.height;
-        if (Math.abs(point.x - pos.x) <= w / 2 && Math.abs(point.y - pos.y) <= h / 2) {
+        const hitW = w + 16 / zoom;
+        const hitH = h + 16 / zoom;
+        if (Math.abs(point.x - pos.x) <= hitW / 2 && Math.abs(point.y - pos.y) <= hitH / 2) {
           clickedNode = node;
           break;
         }
       } else {
         const r = visual.radius;
+        const hitR = r + 12 / zoom;
         const dx = point.x - pos.x;
         const dy = point.y - pos.y;
-        if (dx * dx + dy * dy <= r * r) {
+        if (dx * dx + dy * dy <= hitR * hitR) {
           clickedNode = node;
           break;
         }
@@ -3361,7 +3364,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
         if (!source || !target) continue;
         
         const dist = distToSegment(point, source, target);
-        if (dist <= 8) {
+        if (dist <= 12 / zoom) {
           clickedLink = link;
           break;
         }
@@ -3414,15 +3417,18 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
       if (node.kind === "source") {
         const w = visual.width;
         const h = visual.height;
-        if (Math.abs(point.x - pos.x) <= w / 2 && Math.abs(point.y - pos.y) <= h / 2) {
+        const hitW = w + 16 / zoom;
+        const hitH = h + 16 / zoom;
+        if (Math.abs(point.x - pos.x) <= hitW / 2 && Math.abs(point.y - pos.y) <= hitH / 2) {
           hoverNode = node;
           break;
         }
       } else {
         const r = visual.radius;
+        const hitR = r + 12 / zoom;
         const dx = point.x - pos.x;
         const dy = point.y - pos.y;
-        if (dx * dx + dy * dy <= r * r) {
+        if (dx * dx + dy * dy <= hitR * hitR) {
           hoverNode = node;
           break;
         }
@@ -3653,7 +3659,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
       if (node.kind === "source") {
         const w = visual.width;
         const h = visual.height;
-        const r = 6;
+        const r = Math.min(8, w * 0.28);
         
         ctx.save();
         ctx.beginPath();
@@ -3676,8 +3682,18 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
         ctx.fill();
         ctx.stroke();
 
-        // Draw smartphone using authentic drawPhoneIcon on the left of the label!
-        drawPhoneIcon(ctx, pos.x - w / 2 + 11, pos.y, 13);
+        // Draw smartphone speaker slot and home button details
+        ctx.beginPath();
+        ctx.moveTo(pos.x - w / 4, pos.y - h / 2 + 4);
+        ctx.lineTo(pos.x + w / 4, pos.y - h / 2 + 4);
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+        ctx.lineWidth = 1.3 / zoom;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y + h / 2 - 5, 2.2, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+        ctx.fill();
 
         ctx.restore();
       } else {
@@ -3730,8 +3746,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
         const screenY = pos.y * zoom + pan.y;
         
         if (node.kind === "source") {
-          const textShift = 4 * zoom;
-          ctx.fillText(node.label, screenX + textShift, screenY);
+          ctx.fillText(node.label, screenX, screenY);
         } else {
           ctx.fillText(node.label, screenX, screenY + 2);
         }
@@ -3760,7 +3775,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
 
     ctx.restore();
 
-  }, [graph, positions, zoom, pan, selectedNode, selectedEdge, hoveredNodeId, denseGraph, showLinkLabels, layoutMode]);
+  }, [graph, positions, zoom, pan, selectedNode, selectedEdge, hoveredNodeId, denseGraph, showLinkLabels, layoutMode, VIEW_WIDTH, VIEW_HEIGHT]);
 
   return (
     <div ref={workspaceRef} className={`network-workspace graph-layout-${layoutMode} ${denseGraph ? "is-dense" : ""} ${isGraphFullscreen ? "is-fullscreen" : ""}`}>
