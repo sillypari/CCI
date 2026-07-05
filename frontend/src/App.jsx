@@ -3756,18 +3756,21 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
 
         const baseFontSize = denseGraph ? (node.kind === "source" ? 9 : 8) : 11;
         ctx.font = `bold ${baseFontSize}px var(--font-mono, monospace)`;
-        ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         
         ctx.fillStyle = node.kind === "source" ? "#ffffff" : "#121f2b";
         
-        const screenX = pos.x * zoom + pan.x;
-        const screenY = pos.y * zoom + pan.y;
+        const screenX = Math.round(pos.x * zoom + pan.x);
+        const screenY = Math.round(pos.y * zoom + pan.y);
         
         if (node.kind === "source") {
+          ctx.textAlign = "center";
           ctx.fillText(node.label, screenX, screenY);
         } else {
-          ctx.fillText(node.label, screenX, screenY + 2);
+          ctx.textAlign = "left";
+          const textX = Math.round(screenX + r * zoom + 8);
+          const textY = !denseGraph ? Math.round(screenY - 6) : screenY;
+          ctx.fillText(node.label, textX, textY);
         }
         ctx.restore();
       }
@@ -3780,14 +3783,20 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
 
         ctx.font = `700 10px var(--font-sans, sans-serif)`;
         ctx.fillStyle = "#516070";
-        ctx.textAlign = "center";
         ctx.textBaseline = "top";
 
-        const screenX = pos.x * zoom + pan.x;
-        const screenY = pos.y * zoom + pan.y;
-        const r = visual.radius || visual.height / 2;
+        const screenX = Math.round(pos.x * zoom + pan.x);
+        const screenY = Math.round(pos.y * zoom + pan.y);
 
-        ctx.fillText(node.kind === "source" ? "A-party" : node.operator, screenX, screenY + r * zoom + 6);
+        if (node.kind === "source") {
+          ctx.textAlign = "center";
+          ctx.fillText("A-party", screenX, Math.round(screenY + r * zoom + 6));
+        } else {
+          ctx.textAlign = "left";
+          const textX = Math.round(screenX + r * zoom + 8);
+          const textY = Math.round(screenY + 2);
+          ctx.fillText(node.operator, textX, textY);
+        }
         ctx.restore();
       }
     });
