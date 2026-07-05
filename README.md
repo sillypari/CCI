@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue?style=for-the-badge&logo=windows" alt="Platform"/>
   <img src="https://img.shields.io/badge/Backend-Python%20%7C%20FastAPI-green?style=for-the-badge&logo=fastapi" alt="Backend"/>
   <img src="https://img.shields.io/badge/Frontend-React%20%7C%20Vite-blue?style=for-the-badge&logo=react" alt="Frontend"/>
-  <img src="https://img.shields.io/badge/Database-SQLite-003b57?style=for-the-badge&logo=sqlite" alt="Database"/>
+  <img src="https://img.shields.io/badge/Storage-JSON%20Store%20%7C%20SQLite%20Snapshot-003b57?style=for-the-badge&logo=sqlite" alt="Storage"/>
   <img src="https://img.shields.io/badge/Engine-Polars-FFDA3B?style=for-the-badge&logo=python" alt="Engine"/>
 </p>
 
@@ -22,7 +22,7 @@
 
 Pramaan IPDR is a smart investigation workflow for extracting and identifying B-party public IP addresses, mobile endpoints, and communication relationships from IPDR logs. The project is designed for law-enforcement investigation teams that need to normalize operator-provided IPDR files, map A-party to B-party interactions, reduce relay/noise traffic, and prepare actionable request packages with an auditable evidence trail.
 
-This repository contains a working Phase 1 implementation with a FastAPI backend, a Vite React dashboard, persistent local evidence storage, IPDR parsing, operator format validation, case management, configurable import specifications, IP classification, extraction workflows, communication mapping, timeline analytics, investigation reports, export artifacts, and request-package generation.
+This repository contains a working Phase 1/Phase 2 hybrid implementation with a FastAPI backend, a Vite React dashboard, persistent local evidence storage, IPDR parsing, operator format validation, case management, configurable import specifications, IP classification, extraction workflows, communication mapping, timeline analytics, investigation reports, export artifacts, and request-package generation. The latest build also includes a score-ranked Investigation Cockpit, graph clusters and insight cards, matrix view, richer PoI/IMEI reporting, PDF/XLSX exports, upload/job deletion, persistence reset, and a generated user manual.
 
 ---
 
@@ -58,6 +58,7 @@ Query session databases and filter by IPs, Cell IDs, IMEIs, and multi-window par
   <img src="Screenshots/session.png" width="75%" alt="Session Explorer"/>
 </p>
 
+
 ### Request Packages and Ingestion Status
 Compare generated CGNAT request packages and monitor file upload status.
 <p align="center">
@@ -71,6 +72,16 @@ Manage operator column mappings, inspect active platform ranges, and review tamp
   <img src="Screenshots/Seeting_platformranges.png" width="48%" alt="Platform Ranges"/>
   <img src="Screenshots/AuditLogs.png" width="48%" alt="Audit Logs"/>
 </p>
+
+---
+
+## User Manual
+
+A generated investigator-facing manual is included in the repository:
+
+- [Pramaan IPDR User Manual](UserManual/Pramaan_IPDR.pdf)
+
+Use this README for developer setup, architecture, API reference, data contracts, and operational limitations. Use the PDF manual as a guided application walkthrough.
 
 ---
 
@@ -92,9 +103,13 @@ The system focuses on the following tasks:
 
 ### Current Implementation Status
 
-This repository is a fully functional, production-ready implementation designed for hackathon validation and continued hardening. It persists uploaded evidence and derived records to a local JSON-backed evidence store, can write a SQLite investigation snapshot for downstream analysis, and uses generated test fixtures for verification.
+This repository is a functional local implementation designed for hackathon validation, technical demonstration, and continued hardening. It persists uploaded evidence and derived records to a local JSON-backed evidence store, can write a SQLite investigation snapshot for downstream analysis, and uses deterministic synthetic fixtures for verification. It should be treated as pre-production until authentication, RBAC, approved datasets, immutable audit storage, and operator-certified adapters are added.
 
 Implemented capabilities:
+
+- Current graph responses include scored nodes and edges, first/last seen timestamps, cluster IDs, metadata samples, omitted node/edge counts, total source/endpoint counts, server-generated investigation insights, and view metadata describing the active graph query.
+- Current frontend visualization avoids treating large IPDR graphs as a single raw hairball. It starts from ranked overview or a focused entity, then lets the investigator narrow by score, time, classification, hop depth, relay visibility, rank mode, and layout.
+- The app now includes a generated PDF user manual under `UserManual/Pramaan_IPDR.pdf`.
 
 - FastAPI API service with health, case, import-specification, upload, session, extraction, graph, analytics, report, package, search, audit, and settings endpoints.
 - Case and Upload Deletion: Fully integrated deletion workflow on both the backend and frontend. Deleting a case re-associates orphan uploads back to the default General Evidence Intake case.
@@ -111,17 +126,17 @@ Implemented capabilities:
 - Known platform relay range detection for services such as WhatsApp, Telegram, and Google ranges included in the classifier.
 - Operator range tagging for selected Indian telecom ranges.
 - Extraction workflow for a supplied A-party MSISDN with confidence-filtered B-party candidates.
-- Backend graph aggregation endpoint for visualization slices by case, MSISDN, and classification, plus JSON and GraphML export for external graph analysis.
-- Interactive React communication map with zoom, pan, drag, link inspection, node inspection, graph metrics, and extraction handoff.
+- Backend graph aggregation endpoint for visualization slices by case, focus entity, classification, hop depth, time range, score threshold, relay visibility, rank mode, and flow limit, plus JSON and GraphML export for external graph analysis.
+- Investigation Cockpit UI with focus search, automatic focus-type detection, 1-hop/2-hop expansion, score threshold slider, relay/noise toggle, rank modes, top-N bounding, time windows, insight cards, cluster chips, force/concentric/Sankey/matrix views, zoom, pan, drag, fit/reset controls, node inspection, edge inspection, and extraction handoff.
 - Suspicious-pattern detection for bursts, repeated direct contacts, shared endpoints, relay-heavy behavior, and quarantine review.
 - Timeline analytics from year down to second-level buckets.
 - Application summary and common-application reports for comparing app/destination usage across PoIs.
-- PoI summary, IP summary, IMEI frequency, day/night location summary, sessions CSV export, and CSV/HTML report exports for PoI and destination IP summaries.
+- PoI summary, IP summary, IMEI frequency, day/night location summary, WhatsApp/Meta relay reports, common WhatsApp reports, sessions CSV/XLSX export, PoI PDF export, and CSV/HTML report exports for PoI and destination IP summaries.
 - Request-package generation for actionable B-party candidates.
 - Synchronous ingestion job ledger for upload status, progress, archive-member context, and error review.
 - SQLite persistence snapshot endpoint for cases, uploads, ingestion jobs, sessions, reports, packages, and audit logs.
 - Audit log surface for important workflow events.
-- React dashboard with dashboard, cases, upload, sessions, extraction, communication map, analytics, reports, packages, audit log, and settings pages.
+- React dashboard with dashboard, cases, upload, sessions, extraction, investigation cockpit, analytics, reports, dedicated PoI dossier, IMEI intelligence, packages, audit log, and settings pages.
 - App branding through Pramaan IPDR logo/favicons, Inter body font, JetBrains Mono technical font, and a restrained investigation-grade UI.
 - Docker Compose wiring for API, frontend, TimescaleDB, and Redis.
 - Unit and API tests for classifier, ingestion, extraction, graph, quarantine, and API behavior.
@@ -143,6 +158,7 @@ Not yet production complete:
 ```text
 .
 |-- Screenshots/              # App interface screenshot directory
+|-- UserManual/               # Generated investigator-facing PDF manual
 |-- backend/
 |   |-- app/
 |   |   |-- api/              # FastAPI route definitions
@@ -176,7 +192,7 @@ Not yet production complete:
 
 Backend:
 
-- Python 3.11 or newer recommended
+- Python 3.10 or newer required by `backend/pyproject.toml`; Python 3.11 or newer is recommended
 - FastAPI
 - Pydantic and pydantic-settings
 - Uvicorn
@@ -184,6 +200,8 @@ Backend:
 - SQLAlchemy, asyncpg, and Alembic for the planned database layer
 - Celery and Redis for the planned worker pipeline
 - pyasn and GeoIP2 for offline ASN enrichment
+- OpenPyXL for XLSX export
+- ReportLab for PoI PDF briefs
 - Pytest
 
 Frontend:
@@ -193,8 +211,10 @@ Frontend:
 - Vite 6
 - React Router
 - Framer Motion
-- D3 force simulation
+- D3 and D3 force simulation
 - TanStack Table for planned large data tables
+- React Leaflet and Leaflet for location/geofence maps
+- Recharts for IMEI and report visualizations
 - Lucide React icons
 - Inter and JetBrains Mono font packages
 
@@ -216,12 +236,12 @@ Infrastructure wiring:
 6. Each session is classified as p2p, relay, or unknown using destination IP ranges, destination ports, byte counts, and operator/platform hints.
 7. The dashboard presents case count, upload health, normalized sessions, candidate counts, quarantine count, and actionable rate.
 8. The investigator searches or filters sessions by MSISDN, IP, IMEI, application, domain, cell ID, case, date range, operator, or classification.
-9. The investigator opens the communication map to inspect A-party to B-party relationships with graph metrics, node details, link evidence, zoom, pan, and drag controls.
-10. The investigator exports graph slices as JSON or GraphML when external analysis is needed.
+9. The investigator opens the Investigation Cockpit to inspect ranked A-party to B-party relationships with focus search, score threshold, classification filter, hop depth, time window, layout mode, graph metrics, clusters, insights, node details, link evidence, matrix view, zoom, pan, and drag controls.
+10. The investigator exports the active graph slice as JSON or GraphML when external analysis is needed.
 11. The investigator runs extraction for an A-party MSISDN.
 12. The system returns B-party candidates with evidence references and confidence.
 13. Actionable candidates can be converted into request-package payloads.
-14. Analytics and Reports provide timeline drill-down, PoI summary, IP summary, common applications, IMEI frequency, day/night location summary, and CSV/HTML exports.
+14. Analytics and Reports provide timeline drill-down, suspicious-pattern review, PoI summary, IP summary, common applications, WhatsApp/Meta indicators, IMEI frequency, day/night location summary, GIS/geofence view, PDF briefs, XLSX export, and CSV/HTML exports.
 15. Settings can write a SQLite snapshot for local evidence review or downstream tooling.
 16. Audit logs record investigation workflow events for traceability.
 
@@ -310,14 +330,16 @@ Default backend settings:
 | --- | --- | --- |
 | `IPDR_API_PREFIX` | `/api` | API route prefix |
 | `IPDR_UPLOAD_DIR` | `uploads` | Upload storage directory |
-| `IPDR_MAX_UPLOAD_BYTES` | `52428800` | Maximum accepted upload size in bytes |
+| `IPDR_MAX_UPLOAD_BYTES` | `524288000` | Maximum accepted upload size in bytes for local backend defaults. Docker Compose currently overrides this to `52428800` bytes. |
 | `IPDR_CORS_ORIGINS` | `http://localhost:5173`, `http://127.0.0.1:5173` | Allowed frontend origins |
 
 Default frontend setting:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `VITE_API_URL` | `http://localhost:8000/api` | Backend API base URL |
+| `VITE_API_URL` | `/api` in the Vite app, commonly set to `http://localhost:8000/api` for separate deployments | Backend API base URL |
+
+Note: `IPDR_CORS_ORIGINS` exists in settings, but the current development app factory allows all origins for local testing. Restrict CORS before any operational deployment.
 
 ### 3. Run the backend
 
@@ -386,12 +408,21 @@ For best results, use the column names or accepted aliases listed in Supported U
 
 ### Sessions
 
-Use Sessions to inspect normalized IPDR records. You can search and filter sessions by:
+Use Sessions to inspect normalized IPDR records and verify graph or extraction leads against row-level evidence. The explorer supports:
 
-- MSISDN
-- Destination IP
-- Operator or platform hint
-- Classification: p2p, relay, or unknown
+- Global query text.
+- Classification: p2p, relay, or unknown.
+- A-party MSISDN.
+- Destination IP.
+- Operator or platform hint.
+- Application hint.
+- Domain or hostname.
+- Cell tower or location identifier.
+- IMEI.
+- Serial date-time filtering with one continuous time window.
+- Parallel date-time filtering with multiple independent windows for incident correlation.
+
+The session table remains the source for row-level verification after graph exploration or report generation.
 
 ### B-Party Extraction
 
@@ -411,21 +442,68 @@ Current extraction request shape:
 }
 ```
 
-### Communication Map
+### Investigation Cockpit / Communication Map
 
-Use Communication Map to visualize A-party to destination endpoint relationships. The graph is intended to make investigation patterns easier to inspect than a table alone.
+Use the Investigation Cockpit to convert large IPDR evidence into a bounded, ranked graph slice. The goal is not to render every raw session at once. The graph should guide the investigator toward the most useful source, endpoint, cluster, or time window.
 
-Recommended use:
+Recommended workflow:
 
-- Filter by MSISDN before analysis.
-- Use classification filters to isolate likely P2P leads.
-- Inspect relay-heavy clusters separately from actionable P2P candidates.
-- Use the graph as a lead-discovery surface, then verify in the session table and extraction result.
-- Export JSON or GraphML when the slice must be reviewed in external graph tooling.
+1. Start with the ranked overview when the case is new.
+2. Enter a focus value when a target is known. The UI accepts MSISDN, destination IP, IMEI, IMSI, or any-field search.
+3. Use the 1-hop view for direct A-party to B-party inspection.
+4. Enable 2-hop only when looking for shared endpoints or related suspects.
+5. Use P2P only when looking for actionable direct B-party leads.
+6. Hide or isolate relay traffic when platform infrastructure is overwhelming the view.
+7. Raise the score threshold to suppress weak or repetitive noise.
+8. Change rank mode depending on the investigative question: score, P2P first, confidence, volume, or recent.
+9. Use time windows to analyze activity before or after a known incident.
+10. Switch layout mode when needed:
+   - Force Clustered for general relationship exploration.
+   - Concentric Radial for source-centered review.
+   - Sankey Flow for directional source-to-destination comparison.
+   - Adjacency Matrix for dense cases where node-link views become unreadable.
+11. Click a node or edge to inspect evidence rows, ports, app hints, confidence, score, timestamps, IMEI/IMSI samples, and request-package context.
+12. Run extraction from the selected A-party or from the top-ranked source.
+13. Export JSON or GraphML when the slice must be reviewed in external graph tooling.
+
+The backend returns graph nodes, edges, metrics, clusters, insights, and view metadata. This lets the frontend display explanation panels instead of a raw hairball.
 
 ### Reports
 
-Use Reports to build PoI MSISDN and destination IP summaries. Report previews can be exported as CSV for analysis or HTML for printable review. The Reports page also surfaces common applications, IMEI frequency, and day/night location summaries when those fields exist in the uploaded IPDR data.
+Use Reports to build PoI MSISDN and destination IP summaries. Report previews can be exported as CSV or HTML, PoI dossiers can be exported as PDF, and normalized sessions can be exported as CSV or XLSX.
+
+The reporting surface includes:
+
+- PoI summary: total sessions, P2P/relay/unknown counts, first/last seen, bytes, IMEIs, top applications, and top destinations.
+- Destination IP summary: source MSISDNs, ports, operator/classification, time range, total bytes, and supporting sessions.
+- Common applications: app/operator usage shared across multiple PoIs.
+- WhatsApp/Meta reports: PoI-specific and common WhatsApp/Meta infrastructure indicators.
+- IMEI frequency: active handsets, shared devices, TAC-derived model hints, and source MSISDNs.
+- Location summary: day/night tower or coordinate activity when cell/location fields are present.
+- GIS map: Leaflet hotspot map with marker limits and geofence radius filtering.
+
+### PoI Dossier
+
+Open a PoI route from reports, session links, or a B-party destination workflow to review one suspect line in more detail. The PoI dossier aggregates:
+
+- Top locations and day/night split.
+- Associated IMEIs and handset hints.
+- Top applications and cumulative duration.
+- Top B-party destinations.
+- WhatsApp/Meta relay activity.
+- PDF export for briefing or review.
+- Direct navigation back to the session evidence.
+
+### IMEI Analysis
+
+Use IMEI Analysis to identify device reuse across multiple A-party MSISDNs. This page is especially useful when suspects rotate SIMs but reuse the same handset.
+
+The page includes:
+
+- Top handset chart by sessions and unique MSISDNs.
+- IMEI frequency table.
+- TAC-based deterministic handset hints for demo data.
+- Shared-device warning when one IMEI appears across multiple source MSISDNs.
 
 ### Request Packages
 
@@ -439,7 +517,36 @@ Use Audit Log to review workflow events. In production, this surface should be t
 
 ### Settings
 
-Use Settings to review or extend platform and operator ranges used by the classification workflow, manage import specifications, inspect loaded adapters, and write a SQLite evidence snapshot from the System Info tab.
+Use Settings to manage technical investigation configuration:
+
+- Platform ranges used by relay/noise classification.
+- Import specifications for operator-specific headers.
+- Operator/classifier information.
+- SQLite evidence snapshot creation.
+- Persistence reset for local development or demonstration cleanup.
+
+Do not reset persistence in an operational case unless evidence retention and chain-of-custody requirements allow it.
+
+---
+
+## Large Graph Strategy
+
+IPDR data can grow from thousands to millions of rows. A professional investigation tool should not draw every row as a visible node-link diagram. Pramaan IPDR follows the same principles used by serious graph-analysis systems:
+
+| Principle | Implementation in Pramaan IPDR |
+| --- | --- |
+| Aggregate before rendering | The backend groups sessions into source-to-destination edges and samples evidence rows per edge. |
+| Focus first | `/api/graph` accepts `focus` and `focus_type` so investigators can start from an MSISDN, IP, IMEI, IMSI, or broad search value. |
+| Bound the slice | `limit` and `scan_limit` prevent the frontend from receiving unbounded graph payloads. |
+| Rank by investigation value | `rank_by=score` combines confidence, class, repeat activity, bytes, duration, shared endpoints, and night activity. Other modes include `p2p`, `confidence`, `volume`, and `recent`. |
+| Suppress noise | `include_relay=false`, classification filters, and score thresholds reduce platform relay clutter. |
+| Expand progressively | `hops=1` shows direct relationships; `hops=2` expands to related sources/endpoints only when needed. |
+| Preserve evidence | Nodes and edges include sampled source sessions with row numbers, source files, ports, timestamps, app hints, and confidence. |
+| Explain the view | Graph responses include clusters, insights, omitted edge/node counts, score fields, and view metadata. |
+| Offer alternate views | Dense cases can be reviewed through graph layouts or adjacency matrix mode. |
+| Export the slice | JSON and GraphML exports preserve the active filters for external graph tools. |
+
+For investigation work, the recommended first screen is a ranked overview or focused entity view, not the whole database. Raw session rows remain available in Sessions and Reports for verification.
 
 ---
 
@@ -456,13 +563,18 @@ http://localhost:8000/api
 | `GET` | `/dashboard/stats` | Dashboard metrics, case count, crime-type counts, and latest upload summary |
 | `GET` | `/cases` | List investigation cases |
 | `POST` | `/cases` | Create an investigation case |
+| `DELETE` | `/cases/{case_id}` | Delete a non-protected case and move uploads back to General Evidence Intake |
 | `GET` | `/import-specs` | List configurable operator import specifications |
 | `POST` | `/import-specs` | Create a custom import specification |
 | `GET` | `/uploads` | List upload records |
 | `GET` | `/uploads/jobs` | List synchronous ingestion jobs |
 | `GET` | `/uploads/jobs/{job_id}` | Read one ingestion job |
+| `DELETE` | `/uploads/jobs/{job_id}` | Delete one ingestion job record |
+| `DELETE` | `/uploads/jobs` | Clear ingestion job history |
 | `POST` | `/uploads/validate` | Validate file format and required fields without committing sessions |
+| `POST` | `/uploads/auto-suggest-mapping` | Suggest canonical mappings from uploaded operator headers |
 | `POST` | `/uploads` | Upload an IPDR file as multipart form data, optionally with `case_id` and `import_spec_id` |
+| `DELETE` | `/uploads/{upload_id}` | Delete an upload and remove its associated sessions/evidence |
 | `GET` | `/uploads/{upload_id}/status` | Read upload processing status |
 | `GET` | `/uploads/{upload_id}/quarantine` | List row-level quarantine reasons for an upload |
 | `GET` | `/sessions` | List normalized sessions with filters for case, MSISDN, class, IP, IMEI, app, domain, cell ID, and date range |
@@ -483,16 +595,61 @@ http://localhost:8000/api
 | `GET` | `/reports/location-summary` | List cell/location day-night summaries when location columns exist |
 | `GET` | `/reports/poi/{msisdn}.csv` | Export a PoI summary as CSV |
 | `GET` | `/reports/poi/{msisdn}.html` | Export a PoI summary as HTML |
+| `GET` | `/reports/poi/{msisdn}.pdf` | Export a PoI brief as PDF |
 | `GET` | `/reports/ip/{destination_ip}.csv` | Export a destination IP summary as CSV |
 | `GET` | `/reports/ip/{destination_ip}.html` | Export a destination IP summary as HTML |
+| `GET` | `/reports/whatsapp/{msisdn}` | List WhatsApp/Meta-related sessions for one PoI |
+| `GET` | `/reports/common-whatsapp` | List common WhatsApp/Meta application indicators across PoIs |
 | `GET` | `/reports/sessions.csv` | Export normalized sessions as CSV |
+| `GET` | `/reports/sessions.xlsx` | Export normalized sessions as XLSX |
 | `GET` | `/packages` | List generated request packages |
 | `GET` | `/audit-logs` | List audit log events |
 | `GET` | `/search` | Search sessions, uploads, and packages |
 | `GET` | `/persistence/status` | Read local persistence snapshot status |
 | `POST` | `/persistence/snapshot` | Write or refresh the SQLite evidence snapshot |
+| `POST` | `/persistence/reset` | Reset local persistence and clear records back to zero |
 | `GET` | `/platform-ranges` | List configured platform ranges |
 | `POST` | `/platform-ranges` | Add a platform range |
+
+### Graph Query Parameters
+
+`GET /api/graph`, `/api/graph/export.json`, and `/api/graph/export.graphml` share the same investigation filter contract.
+
+| Parameter | Values | Purpose |
+| --- | --- | --- |
+| `focus` | string | Entity value to start from, such as MSISDN, destination IP, IMEI, IMSI, or free text. |
+| `focus_type` | `msisdn`, `ip`, `endpoint`, `imei`, `imsi`, `any` | Tells the backend how to interpret `focus`. |
+| `classification` | `p2p`, `relay`, `unknown` | Restricts graph sessions to one classification. Omit for all classes. |
+| `case_id` | case ID | Restricts graph analysis to one investigation case. |
+| `limit` | 1 to 5000 | Maximum visible graph edges returned. The UI defaults to bounded top slices. |
+| `scan_limit` | 1 to 100000 | Maximum sessions scanned server-side before ranking. |
+| `hops` | 1 or 2 | Uses direct neighborhood or related two-hop neighborhood around the focus entity. |
+| `include_relay` | `true` or `false` | Includes or suppresses relay/noise traffic. |
+| `min_score` | 0.0 to 1.0 | Hides low-priority edges below the investigation score threshold. |
+| `rank_by` | `score`, `volume`, `confidence`, `recent`, `p2p` | Sorts candidate edges according to the current investigation question. |
+| `started_from` | ISO datetime | Lower time bound for sessions. |
+| `started_to` | ISO datetime | Upper time bound for sessions. |
+
+Example focused graph query:
+
+```powershell
+curl.exe "http://localhost:8000/api/graph?focus=919876543210&focus_type=msisdn&hops=1&classification=p2p&rank_by=score&limit=100"
+```
+
+Example dense-case query with relay suppression and score threshold:
+
+```powershell
+curl.exe "http://localhost:8000/api/graph?include_relay=false&min_score=0.45&rank_by=p2p&limit=250"
+```
+
+Graph response highlights:
+
+- `nodes`: A-party and endpoint nodes with `score`, `cluster_id`, first/last seen timestamps, sampled sessions, and metadata.
+- `links`: Aggregated source-to-destination edges with classification, counts, bytes, duration, confidence, score, timestamps, sampled sessions, and metadata.
+- `metrics`: Visible node/edge counts, scanned sessions, omitted node/edge counts, source/endpoint totals, class counts, high-confidence count, and first/last seen timestamps.
+- `clusters`: Server-side groups such as A-parties, direct P2P leads, Meta/WhatsApp, relay/noise, unknown endpoints, or operator clusters.
+- `insights`: Ranked investigation hints such as top source, shared endpoint, or relay concentration.
+- `view`: The normalized query contract used to generate the graph.
 
 Example upload request:
 
@@ -541,6 +698,23 @@ The classifier should be extended with operator-specific field mappings, verifie
 
 ---
 
+## Enrichment and Data Boundaries
+
+The current build supports enrichment, but approved production datasets are still required for field deployment.
+
+| Area | Current behavior | Production requirement |
+| --- | --- | --- |
+| ASN/IP decode | Loads local `rib.dat`, GeoLite2, and `platform_asns.json` if available. Falls back to deterministic demo prefix handling when datasets are absent. | Use approved offline ASN, GeoIP, and operator range datasets with update procedures. |
+| Platform relay detection | Uses configured platform ranges and known demo/platform mappings for services such as Meta/WhatsApp, Telegram, Google, and custom ranges. | Maintain legally approved, versioned relay and platform infrastructure ranges. |
+| TAC/handset lookup | Uses deterministic demo TAC hints in `tac_decoder.py`. | Replace with licensed or department-approved TAC database. |
+| Cell location lookup | Uses supplied latitude/longitude when present and deterministic demo coordinates for cell IDs when needed. | Replace with official cell tower master data and operator-provided site metadata. |
+| Operator adapters | Includes canonical and operator-shaped mappings for DoT IPDR, NAT SYSLOG, Airtel, Jio, Vodafone Idea, BSNL, and generic uploads. | Validate against real sanitized operator samples and update import specifications. |
+| External enrichment | No uncontrolled third-party OSINT or caller-ID integrations are claimed. | Add only after legal approval, audit controls, and data-source licensing. |
+
+Synthetic fixtures under `backend/tests/fixtures/` are for validation and demonstration. Do not commit real IPDR logs, subscriber records, or live investigation exports.
+
+---
+
 ## Testing
 
 Run backend tests:
@@ -578,6 +752,7 @@ Operational recommendations before production use:
 - Enforce case-level access boundaries.
 - Encrypt uploads and extracted artifacts at rest.
 - Use TLS in all deployed environments.
+- Restrict CORS in deployed environments; the current app factory is permissive for local development.
 - Store audit logs in append-only or tamper-evident storage.
 - Redact personal data in non-production logs.
 - Do not commit real IPDR files, subscriber data, or investigation exports.
