@@ -820,14 +820,22 @@ function UploadsPage({ uploads = [], jobs = [], cases = [], importSpecs = [], up
             {validating || uploading ? (
               <>
                 <span className="upload-drop__icon animate-spin"><Loader2 size={34} style={{ color: "var(--color-brand)" }} /></span>
-                <strong>{progress.phase === "validating" ? "Validating file format..." : "Uploading file to server..."}</strong>
+                <strong>
+                  {progress.percent < 100 
+                    ? (progress.phase === "validating" ? "Validating file format..." : "Uploading file to server...")
+                    : (progress.phase === "validating" ? "Validating data schema..." : "Ingesting IPDR logs into database...")}
+                </strong>
                 <span className="mono" style={{ fontSize: "14px", color: "var(--color-brand)", fontWeight: "bold", margin: "6px 0" }}>
-                  {progress.percent}% ({formatSpeed(progress.speed)})
+                  {progress.percent < 100 
+                    ? `${progress.percent}% (${formatSpeed(progress.speed)})` 
+                    : "100% (Upload finished)"}
                 </span>
-                <span>
+                <span style={{ fontSize: "12.5px", color: "var(--color-text-muted)", opacity: 0.9 }}>
                   {progress.percent < 100 
                     ? `Transferring bytes (${number(progress.loaded)} / ${number(progress.total)})...` 
-                    : progress.phase === "validating" ? "Processing validation checks on server..." : "Initializing server-side row parsing..."}
+                    : progress.phase === "validating" 
+                      ? "Verifying structure and validating column mappings..." 
+                      : "Parsing CSV rows and populating Case session telemetry... Please wait."}
                 </span>
               </>
             ) : (
