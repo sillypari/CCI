@@ -486,9 +486,9 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 }
 
 .button span {
-  color: inherit;
-  font-size: inherit;
-  font-weight: inherit;
+  color: inherit !important;
+  font-size: inherit !important;
+  font-weight: inherit !important;
 }
 
 .button.primary {

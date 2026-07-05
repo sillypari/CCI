@@ -183,6 +183,8 @@ function App() {
       try {
         const jobsList = await api.uploadJobs();
         setData((current) => ({ ...current, jobs: jobsList }));
+        setApiLive(true);
+        setApiError("");
         
         const hasActive = jobsList.some((j) => j.status === "processing" || j.status === "pending");
         if (!hasActive) {
@@ -191,12 +193,14 @@ function App() {
         }
       } catch (err) {
         console.error("Polling jobs failed:", err);
+        setApiLive(false);
+        setApiError(err.message);
       }
     };
 
-    const hasActiveJob = isServerActive || data.jobs.some((j) => j.status === "processing" || j.status === "pending");
+    const hasActiveJob = !apiLive || isServerActive || data.jobs.some((j) => j.status === "processing" || j.status === "pending");
     if (hasActiveJob) {
-      timer = setInterval(poll, 1500);
+      timer = setInterval(poll, 2000);
     } else {
       timer = setInterval(poll, 6000);
     }
@@ -204,7 +208,7 @@ function App() {
     return () => {
       if (timer) clearInterval(timer);
     };
-  }, [data.jobs, isServerActive]);
+  }, [data.jobs, isServerActive, apiLive]);
 
   const setJobs = useCallback((jobsList) => {
     setData((current) => ({ ...current, jobs: jobsList }));
@@ -750,6 +754,11 @@ function UploadsPage({ uploads = [], jobs = [], cases = [], importSpecs = [], up
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState({ percent: 0, speed: 0, loaded: 0, total: 0, phase: "" });
   const fileInputId = useId();
+  const activeJob = jobs.find(
+    (j) => 
+      j.filename === activeFile?.name && 
+      (j.status === "processing" || j.status === "pending")
+  );
   const [caseId, setCaseId] = useState("CASE-GENERAL");
   const [importSpecId, setImportSpecId] = useState("");
 
@@ -863,22 +872,62 @@ function UploadsPage({ uploads = [], jobs = [], cases = [], importSpecs = [], up
               <>
                 <span className="upload-drop__icon animate-spin"><Loader2 size={34} style={{ color: "var(--color-brand)" }} /></span>
                 <strong>
-                  {progress.percent < 100 
-                    ? (progress.phase === "validating" ? "Validating file format..." : "Uploading file to server...")
-                    : (progress.phase === "validating" ? "Validating data schema..." : "Ingesting IPDR logs into database...")}
+                  {activeJob 
+                    ? `Ingesting ${activeJob.filename} into database...`
+                    : (progress.percent < 100 
+                        ? (progress.phase === "validating" ? "Validating file format..." : "Uploading file to server...")
+                        : (progress.phase === "validating" ? "Validating data schema..." : "Ingesting IPDR logs into database..."))}
                 </strong>
                 <span className="mono" style={{ fontSize: "14px", color: "var(--color-brand)", fontWeight: "bold", margin: "6px 0" }}>
-                  {progress.percent < 100 
-                    ? `${progress.percent}% (${formatSpeed(progress.speed)})` 
-                    : "100% (Upload finished)"}
+                  {activeJob 
+                    ? `${activeJob.progress}%` 
+                    : (progress.percent < 100 
+                        ? `${progress.percent}% (${formatSpeed(progress.speed)})` 
+                        : "100% (Upload finished)")}
                 </span>
                 <span style={{ fontSize: "12.5px", color: "var(--color-text-muted)", opacity: 0.9 }}>
-                  {progress.percent < 100 
-                    ? `Transferring bytes (${number(progress.loaded)} / ${number(progress.total)})...` 
-                    : progress.phase === "validating" 
-                      ? "Verifying structure and validating column mappings..." 
-                      : "Parsing CSV rows and populating Case session telemetry... Please wait."}
+                  {activeJob 
+                    ? activeJob.message 
+                    : (progress.percent < 100 
+                        ? `Transferring bytes (${number(progress.loaded)} / ${number(progress.total)})...` 
+                        : progress.phase === "validating" 
+                          ? "Verifying structure and validating column mappings..." 
+                          : "Parsing CSV rows and populating Case session telemetry... Please wait.")}
                 </span>
+                {activeJob && (
+                  <button
+                    type="button"
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (window.confirm(`Are you sure you want to terminate ingestion for ${activeJob.filename}?`)) {
+                        try {
+                          await api.deleteJob(activeJob.id);
+                          const updatedJobs = await api.uploadJobs();
+                          setJobs(updatedJobs);
+                        } catch (err) {
+                          console.error("Failed to terminate job:", err);
+                        }
+                      }
+                    }}
+                    style={{
+                      marginTop: "12px",
+                      background: "rgba(214, 76, 74, 0.08)",
+                      border: "1px solid var(--color-danger)",
+                      color: "var(--color-danger)",
+                      cursor: "pointer",
+                      padding: "6px 14px",
+                      borderRadius: "4px",
+                      fontSize: "12px",
+                      fontWeight: "600",
+                      pointerEvents: "auto",
+                      transition: "background 150ms ease"
+                    }}
+                    className="hover:bg-red-100"
+                  >
+                    Cancel Ingestion
+                  </button>
+                )}
               </>
             ) : (
               <>
