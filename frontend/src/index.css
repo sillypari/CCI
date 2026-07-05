@@ -3929,14 +3929,27 @@ tbody tr:hover {
 .map-score-filter {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--color-text-secondary);
   white-space: nowrap;
+  padding: 0 12px;
+  height: 38px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-primary);
+  transition: background var(--transition-fast), color var(--transition-fast);
+  cursor: pointer;
+}
+.map-score-filter:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
 }
 .map-score-filter input[type="range"] {
   width: 72px;
   accent-color: var(--color-brand);
+  cursor: pointer;
 }
 .map-date {
   display: inline-flex;
