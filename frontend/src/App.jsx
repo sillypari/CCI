@@ -3238,14 +3238,34 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
   }, [VIEW_WIDTH, VIEW_HEIGHT]);
 
   const zoomToPoint = useCallback((nextZoom, rawPoint, baseZoom = zoom, basePan = pan) => {
+    let sumX = 0, sumY = 0, count = 0;
+    graph.nodes.forEach((node) => {
+      const pos = manualPositions[node.id] ?? layoutPositions.get(node.id) ?? { x: node.x, y: node.y };
+      sumX += pos.x;
+      sumY += pos.y;
+      count++;
+    });
+    const centerX = count > 0 ? sumX / count : VIEW_WIDTH / 2;
+    const centerY = count > 0 ? sumY / count : VIEW_HEIGHT / 2;
+
     const graphX = (rawPoint.x - basePan.x) / baseZoom;
     const graphY = (rawPoint.y - basePan.y) / baseZoom;
+
+    const factorBase = baseZoom > 1 ? 1.0 + (baseZoom - 1.0) * 1.25 : 1.0;
+    const factorNext = nextZoom > 1 ? 1.0 + (nextZoom - 1.0) * 1.25 : 1.0;
+
+    const unspreadX = centerX + (graphX - centerX) / factorBase;
+    const unspreadY = centerY + (graphY - centerY) / factorBase;
+
+    const graphXNext = centerX + (unspreadX - centerX) * factorNext;
+    const graphYNext = centerY + (unspreadY - centerY) * factorNext;
+
     setZoom(nextZoom);
     setPan({
-      x: rawPoint.x - graphX * nextZoom,
-      y: rawPoint.y - graphY * nextZoom
+      x: rawPoint.x - graphXNext * nextZoom,
+      y: rawPoint.y - graphYNext * nextZoom
     });
-  }, [pan, zoom]);
+  }, [pan, zoom, graph.nodes, manualPositions, layoutPositions, VIEW_WIDTH, VIEW_HEIGHT]);
 
   const toGraphPoint = (event) => {
     const raw = getRawPointFromClient(event.clientX, event.clientY);
@@ -3281,8 +3301,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
     gestureRef.current = {
       distance: snapshot.distance,
       startZoom: zoom,
-      graphX: (snapshot.rawCenter.x - pan.x) / zoom,
-      graphY: (snapshot.rawCenter.y - pan.y) / zoom
+      startPan: pan
     };
     dragRef.current = { type: "pinch" };
     return true;
@@ -3294,11 +3313,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
     if (!gestureRef.current && !beginPinch()) return false;
     const gesture = gestureRef.current;
     const nextZoom = clamp(gesture.startZoom * (snapshot.distance / gesture.distance), 0.45, 2.4);
-    setZoom(nextZoom);
-    setPan({
-      x: snapshot.rawCenter.x - gesture.graphX * nextZoom,
-      y: snapshot.rawCenter.y - gesture.graphY * nextZoom
-    });
+    zoomToPoint(nextZoom, snapshot.rawCenter, gesture.startZoom, gesture.startPan);
     return true;
   };
 
