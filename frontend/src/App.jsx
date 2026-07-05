@@ -50,7 +50,9 @@ import {
   X,
   ZoomIn,
   ZoomOut,
-  Layers
+  Layers,
+  Maximize2,
+  Minimize2
 } from "lucide-react";
 import { api } from "./api/client.js";
 
@@ -2477,6 +2479,166 @@ function layoutClusteredCommunicationGraph(nodes, links, width, height) {
   return fitGraphPositions(positions, width, height);
 }
 
+function graphVisualScale(width, height, nodeCount, linkCount) {
+  const area = width * height;
+  const density = nodeCount + linkCount * 0.35;
+  const roomScale = clamp(Math.sqrt(area / (1120 * 640)), 0.78, 1.18);
+  const densityScale = density > 160 ? 0.62 : density > 90 ? 0.74 : density > 45 ? 0.86 : 1;
+  return clamp(roomScale * densityScale, 0.52, 1.05);
+}
+
+function graphNodeVisual(node, visualScale, isSankey = false) {
+  if (node.kind === "source") {
+    const baseRadius = 26 * visualScale;
+    const charCount = String(node.label).length;
+    const w = Math.max(baseRadius * 2.2, charCount * 8.0 * visualScale);
+    const h = baseRadius * 1.25;
+    return { width: w, height: h };
+  }
+  const baseRadius = (node.kind === "p2p" ? 18 : 14) * visualScale;
+  const r = isSankey ? baseRadius * 0.8 : baseRadius;
+  return { radius: r };
+}
+
+function layoutRadialInvestigationGraph(nodes, links, width, height) {
+  if (!nodes.length) return new Map();
+  const positions = new Map();
+  const centerX = width * 0.5;
+  const centerY = height * 0.5;
+
+  const sourceNodes = nodes
+    .filter((node) => node.kind === "source")
+    .sort((a, b) => (b.count ?? 0) - (a.count ?? 0) || a.id.localeCompare(b.id));
+  const destinationNodes = nodes
+    .filter((node) => node.kind !== "source")
+    .sort((a, b) => (b.count ?? 0) - (a.count ?? 0) || a.id.localeCompare(b.id));
+
+  sourceNodes.forEach((node, index) => {
+    if (sourceNodes.length === 1) {
+      positions.set(node.id, { x: centerX, y: centerY });
+    } else {
+      const angle = -Math.PI / 2 + (index / sourceNodes.length) * Math.PI * 2;
+      const radius = Math.min(50, sourceNodes.length * 10);
+      positions.set(node.id, {
+        x: centerX + Math.cos(angle) * radius,
+        y: centerY + Math.sin(angle) * radius
+      });
+    }
+  });
+
+  const sourceIds = new Set(sourceNodes.map((n) => n.id));
+  const primarySourceByTarget = new Map();
+  [...links]
+    .sort((a, b) => (b.count ?? 0) - (a.count ?? 0) || a.id.localeCompare(b.id))
+    .forEach((link) => {
+      if (sourceIds.has(link.sourceId) && !primarySourceByTarget.has(link.targetId)) {
+        primarySourceByTarget.set(link.targetId, link.sourceId);
+      }
+    });
+
+  const groups = new Map(sourceNodes.map((n) => [n.id, []]));
+  const ungrouped = [];
+  destinationNodes.forEach((node) => {
+    const sourceId = primarySourceByTarget.get(node.id);
+    if (sourceId && groups.has(sourceId)) {
+      groups.get(sourceId).push(node);
+    } else {
+      ungrouped.push(node);
+    }
+  });
+
+  sourceNodes.forEach((source, sourceIndex) => {
+    const group = groups.get(source.id) ?? [];
+    const sourceAngle = sourceNodes.length === 1
+      ? 0
+      : -Math.PI / 2 + (sourceIndex / sourceNodes.length) * Math.PI * 2;
+    const arc = sourceNodes.length === 1 ? Math.PI * 1.9 : (Math.PI * 2) / sourceNodes.length;
+
+    group.forEach((node, index) => {
+      const ring = Math.floor(index / 12);
+      const slot = index % 12;
+      const slots = Math.min(12, group.length - ring * 12);
+      const fraction = slots <= 1 ? 0 : (slot / (slots - 1)) - 0.5;
+      const jitter = (seededUnit(`${node.id}:jitter`) - 0.5) * 0.12;
+      const angle = sourceAngle + fraction * arc * 0.8 + jitter;
+      const radius = 120 + ring * 65;
+      positions.set(node.id, {
+        x: centerX + Math.cos(angle) * radius,
+        y: centerY + Math.sin(angle) * radius
+      });
+    });
+  });
+
+  ungrouped.forEach((node, index) => {
+    const angle = (index / Math.max(ungrouped.length, 1)) * Math.PI * 2 + (seededUnit(`${node.id}:jitter`) - 0.5) * 0.2;
+    const radius = 250 + Math.floor(index / 16) * 60;
+    positions.set(node.id, {
+      x: centerX + Math.cos(angle) * radius,
+      y: centerY + Math.sin(angle) * radius
+    });
+  });
+
+  return fitGraphPositions(positions, width, height, 76, 1.1);
+}
+
+function layoutSankeyInvestigationGraph(nodes, links, width, height) {
+  if (!nodes.length) return new Map();
+  const positions = new Map();
+
+  const sourceNodes = nodes
+    .filter((node) => node.kind === "source")
+    .sort((a, b) => (b.count ?? 0) - (a.count ?? 0) || a.id.localeCompare(b.id));
+  const destinationNodes = nodes
+    .filter((node) => node.kind !== "source")
+    .sort((a, b) => (b.count ?? 0) - (a.count ?? 0) || a.id.localeCompare(b.id));
+
+  const sourceIds = new Set(sourceNodes.map((n) => n.id));
+  const targetSourcesMap = new Map();
+  links.forEach((link) => {
+    if (sourceIds.has(link.sourceId)) {
+      if (!targetSourcesMap.has(link.targetId)) {
+        targetSourcesMap.set(link.targetId, new Set());
+      }
+      targetSourcesMap.get(link.targetId).add(link.sourceId);
+    }
+  });
+
+  const middleLaneNodes = [];
+  const rightLaneNodes = [];
+
+  destinationNodes.forEach((node) => {
+    const connectedSources = targetSourcesMap.get(node.id)?.size ?? 0;
+    const isHighValue = node.classification === "p2p" || (node.count ?? 0) > 10;
+    if (connectedSources > 1 || isHighValue) {
+      middleLaneNodes.push(node);
+    } else {
+      rightLaneNodes.push(node);
+    }
+  });
+
+  const sourceX = width * 0.18;
+  const midX = width * 0.52;
+  const targetX = width * 0.82;
+
+  const placeLaneNodes = (laneNodes, xPos) => {
+    if (!laneNodes.length) return;
+    const len = laneNodes.length;
+    const padding = 64;
+    const usableHeight = height - padding * 2;
+    laneNodes.forEach((node, index) => {
+      const fraction = len <= 1 ? 0.5 : index / (len - 1);
+      const y = padding + fraction * usableHeight;
+      positions.set(node.id, { x: xPos, y });
+    });
+  };
+
+  placeLaneNodes(sourceNodes, sourceX);
+  placeLaneNodes(middleLaneNodes, midX);
+  placeLaneNodes(rightLaneNodes, targetX);
+
+  return positions;
+}
+
 function layoutCommunicationGraph(nodes, links, width, height) {
   if (!nodes.length) return new Map();
 
@@ -2917,11 +3079,36 @@ function GraphMatrixView({ graphData, selected, onSelect }) {
   );
 }
 
+function graphBoundsForPositions(nodes, positions, visualScale, layoutMode) {
+  if (!nodes.length) return null;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+
+  nodes.forEach((node) => {
+    const point = positions.get(node.id) ?? node;
+    const visual = graphNodeVisual(node, visualScale, layoutMode === "sankey");
+    const radius = node.kind === "source"
+      ? Math.max(visual.width, visual.height) / 2
+      : visual.radius;
+    minX = Math.min(minX, point.x - radius);
+    maxX = Math.max(maxX, point.x + radius);
+    minY = Math.min(minY, point.y - radius);
+    maxY = Math.max(maxY, point.y + radius);
+  });
+
+  return { minX, maxX, minY, maxY };
+}
+
 function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource, layoutMode }) {
-  const VIEW_WIDTH = 1120;
-  const VIEW_HEIGHT = 640;
+  const [canvasSize, setCanvasSize] = useState({ width: 1120, height: 640 });
+  const VIEW_WIDTH = canvasSize.width;
+  const VIEW_HEIGHT = canvasSize.height;
+
   const realCanvasRef = useRef(null);
   const containerRef = useRef(null);
+  const workspaceRef = useRef(null);
   const pointersRef = useRef(new Map());
   const gestureRef = useRef(null);
   const dragRef = useRef(null);
@@ -2929,6 +3116,40 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [manualPositions, setManualPositions] = useState({});
   const [hoveredNodeId, setHoveredNodeId] = useState(null);
+  const [isGraphFullscreen, setIsGraphFullscreen] = useState(false);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver((entries) => {
+      if (!entries || !entries[0]) return;
+      const rect = entries[0].contentRect;
+      setCanvasSize({
+        width: Math.max(800, rect.width),
+        height: Math.max(480, rect.height)
+      });
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsGraphFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      workspaceRef.current?.requestFullscreen?.().catch(() => {});
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+    }
+  };
 
   const graph = useMemo(() => {
     const sourceGraph = graphData ?? emptyGraphData;
@@ -2952,7 +3173,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
         high_confidence: metrics.high_confidence ?? 0
       }
     };
-  }, [graphData]);
+  }, [graphData, VIEW_WIDTH, VIEW_HEIGHT]);
 
   useEffect(() => {
     setManualPositions({});
@@ -2961,39 +3182,27 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
     onSelect(null);
   }, [graphData, onSelect]);
 
+  const visualScale = useMemo(() => {
+    return graphVisualScale(VIEW_WIDTH, VIEW_HEIGHT, graph.nodes.length, graph.links.length);
+  }, [VIEW_WIDTH, VIEW_HEIGHT, graph.nodes.length, graph.links.length]);
+
+  const layoutPositions = useMemo(() => {
+    if (layoutMode === "sankey") {
+      return layoutSankeyInvestigationGraph(graph.nodes, graph.links, VIEW_WIDTH, VIEW_HEIGHT);
+    }
+    if (layoutMode === "concentric") {
+      return layoutRadialInvestigationGraph(graph.nodes, graph.links, VIEW_WIDTH, VIEW_HEIGHT);
+    }
+    return layoutCommunicationGraph(graph.nodes, graph.links, VIEW_WIDTH, VIEW_HEIGHT);
+  }, [graph.nodes, graph.links, layoutMode, VIEW_WIDTH, VIEW_HEIGHT]);
+
   const positions = useMemo(() => {
     const map = new Map();
-    const layouts = graphData?.view?.layouts ?? {};
-    const currentLayout = layouts[layoutMode] ?? {};
-    
-    let sumX = 0, sumY = 0, count = 0;
     graph.nodes.forEach((node) => {
-      const pos = manualPositions[node.id] ?? currentLayout[node.id] ?? { x: node.x, y: node.y };
-      sumX += pos.x;
-      sumY += pos.y;
-      count++;
-    });
-    
-    const centerX = count > 0 ? sumX / count : VIEW_WIDTH / 2;
-    const centerY = count > 0 ? sumY / count : VIEW_HEIGHT / 2;
-    
-    // Spread factor increases as zoom increases above 1.0
-    // Nodes move further apart dynamically as you zoom in, spreading out clusters.
-    const spreadFactor = zoom > 1 ? 1.0 + (zoom - 1.0) * 0.45 : 1.0;
-    
-    graph.nodes.forEach((node) => {
-      const basePos = manualPositions[node.id] ?? currentLayout[node.id] ?? { x: node.x, y: node.y };
-      if (manualPositions[node.id]) {
-        map.set(node.id, basePos);
-      } else {
-        map.set(node.id, {
-          x: centerX + (basePos.x - centerX) * spreadFactor,
-          y: centerY + (basePos.y - centerY) * spreadFactor
-        });
-      }
+      map.set(node.id, manualPositions[node.id] ?? layoutPositions.get(node.id) ?? { x: node.x, y: node.y });
     });
     return map;
-  }, [graph.nodes, manualPositions, graphData, layoutMode, zoom]);
+  }, [graph.nodes, manualPositions, layoutPositions]);
 
   const getRawPointFromClient = useCallback((clientX, clientY) => {
     const canvas = realCanvasRef.current;
@@ -3099,22 +3308,21 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
     let clickedNode = null;
     for (let i = graph.nodes.length - 1; i >= 0; i--) {
       const node = graph.nodes[i];
-      const radius = denseGraph ? (node.kind === "source" ? 18 : 12) : node.kind === "source" ? 34 : 25;
-      const drawRadius = radius / zoom;
+      const visual = graphNodeVisual(node, visualScale, layoutMode === "sankey");
       const pos = positions.get(node.id) ?? node;
       
       if (node.kind === "source") {
-        const charCount = String(node.label).length;
-        const w = Math.max(drawRadius * 1.35, (charCount * 7.4) / zoom);
-        const h = drawRadius * 1.95;
+        const w = visual.width;
+        const h = visual.height;
         if (Math.abs(point.x - pos.x) <= w / 2 && Math.abs(point.y - pos.y) <= h / 2) {
           clickedNode = node;
           break;
         }
       } else {
+        const r = visual.radius;
         const dx = point.x - pos.x;
         const dy = point.y - pos.y;
-        if (dx * dx + dy * dy <= drawRadius * drawRadius) {
+        if (dx * dx + dy * dy <= r * r) {
           clickedNode = node;
           break;
         }
@@ -3178,22 +3386,21 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
     let hoverNode = null;
     for (let i = graph.nodes.length - 1; i >= 0; i--) {
       const node = graph.nodes[i];
-      const radius = denseGraph ? (node.kind === "source" ? 18 : 12) : node.kind === "source" ? 34 : 25;
-      const drawRadius = radius / zoom;
+      const visual = graphNodeVisual(node, visualScale, layoutMode === "sankey");
       const pos = positions.get(node.id) ?? node;
       
       if (node.kind === "source") {
-        const charCount = String(node.label).length;
-        const w = Math.max(drawRadius * 1.35, (charCount * 7.4) / zoom);
-        const h = drawRadius * 1.95;
+        const w = visual.width;
+        const h = visual.height;
         if (Math.abs(point.x - pos.x) <= w / 2 && Math.abs(point.y - pos.y) <= h / 2) {
           hoverNode = node;
           break;
         }
       } else {
+        const r = visual.radius;
         const dx = point.x - pos.x;
         const dy = point.y - pos.y;
-        if (dx * dx + dy * dy <= drawRadius * drawRadius) {
+        if (dx * dx + dy * dy <= r * r) {
           hoverNode = node;
           break;
         }
@@ -3246,28 +3453,44 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
     };
   }, []);
 
-  const fitGraph = () => {
+  const fitGraph = useCallback((options = {}) => {
     if (!graph.nodes.length) return;
-    const allPositions = graph.nodes.map((node) => positions.get(node.id) ?? node);
-    const minX = Math.min(...allPositions.map((node) => node.x));
-    const maxX = Math.max(...allPositions.map((node) => node.x));
-    const minY = Math.min(...allPositions.map((node) => node.y));
-    const maxY = Math.max(...allPositions.map((node) => node.y));
-    const width = Math.max(maxX - minX, 240);
-    const height = Math.max(maxY - minY, 180);
-    const nextZoom = clamp(Math.min((VIEW_WIDTH - 180) / width, (VIEW_HEIGHT - 150) / height), 0.55, 1.8);
+
+    const bounds = graphBoundsForPositions(graph.nodes, positions, visualScale, layoutMode);
+    if (!bounds) return;
+
+    const padding = options.padding ?? Math.max(72, Math.min(VIEW_WIDTH, VIEW_HEIGHT) * 0.1);
+    const width = Math.max(bounds.maxX - bounds.minX, 160);
+    const height = Math.max(bounds.maxY - bounds.minY, 140);
+    const nextZoom = clamp(
+      Math.min((VIEW_WIDTH - padding * 2) / width, (VIEW_HEIGHT - padding * 2) / height),
+      0.35,
+      2.2
+    );
+    const centerX = (bounds.minX + bounds.maxX) / 2;
+    const centerY = (bounds.minY + bounds.maxY) / 2;
+
     setZoom(nextZoom);
     setPan({
-      x: VIEW_WIDTH / 2 - ((minX + maxX) / 2) * nextZoom,
-      y: VIEW_HEIGHT / 2 - ((minY + maxY) / 2) * nextZoom
+      x: VIEW_WIDTH / 2 - centerX * nextZoom,
+      y: VIEW_HEIGHT / 2 - centerY * nextZoom
     });
-  };
+  }, [VIEW_WIDTH, VIEW_HEIGHT, graph.nodes, positions, visualScale, layoutMode]);
+
+  const [fitRequest, setFitRequest] = useState(0);
 
   const resetGraph = () => {
     setManualPositions({});
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
+    setFitRequest((value) => value + 1);
   };
+
+  useEffect(() => {
+    fitGraph({ padding: 96 });
+  }, [fitRequest, fitGraph]);
+
+  useEffect(() => {
+    fitGraph({ padding: 80 });
+  }, [graphData, layoutMode, fitGraph]);
 
   const selectedNode = selected?.type === "node" ? selected.node : null;
   const selectedEdge = selected?.type === "edge" ? selected.link : null;
@@ -3289,9 +3512,10 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
 
     const dpr = window.devicePixelRatio || 1;
     canvas.width = VIEW_WIDTH * dpr;
+    canvas.width = VIEW_WIDTH * dpr;
     canvas.height = VIEW_HEIGHT * dpr;
-    canvas.style.width = `${VIEW_WIDTH}px`;
-    canvas.style.height = `${VIEW_HEIGHT}px`;
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
     ctx.scale(dpr, dpr);
 
     ctx.clearRect(0, 0, VIEW_WIDTH, VIEW_HEIGHT);
@@ -3310,32 +3534,45 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
       ctx.save();
       
       let strokeColor = "#1c7ed6";
-      if (link.classification === "p2p") strokeColor = "#2b8a3e";
-      else if (link.classification === "relay") strokeColor = "#e03131";
-      else if (link.classification === "unknown") strokeColor = "#8b949e";
+      const isRelay = link.classification === "relay";
+      const isP2p = link.classification === "p2p";
+
+      if (isP2p) strokeColor = "#2b8a3e";
+      else if (isRelay) strokeColor = "#e03131";
+      else strokeColor = "#8b949e";
       
       ctx.strokeStyle = strokeColor;
       ctx.lineCap = "round";
       
-      let opacity = denseGraph ? 0.45 : 0.72;
+      let opacity = denseGraph ? 0.35 : 0.65;
+      if (isRelay) opacity *= 0.55;
       if (isSelected) opacity = 1.0;
       ctx.globalAlpha = opacity;
       
-      let linkWidth = denseGraph ? 1.3 + Math.min(Math.log1p(link.count || 1) * 0.38, 2.1) : 2 + Math.min(link.count, 4);
-      if (isSelected) linkWidth = 5;
+      let linkWidth = denseGraph
+        ? 1.0 + Math.min(Math.log1p(link.count || 1) * 0.3, 1.8)
+        : 1.8 + Math.min(Math.log1p(link.count || 1) * 0.5, 3.0);
+      if (isSelected) linkWidth = 4.5;
       ctx.lineWidth = linkWidth / zoom;
 
       ctx.beginPath();
       if (layoutMode === "sankey") {
         ctx.moveTo(source.x, source.y);
-        ctx.bezierCurveTo(source.x + (target.x - source.x) / 2, source.y, source.x + (target.x - source.x) / 2, target.y, target.x, target.y);
+        ctx.bezierCurveTo(
+          source.x + (target.x - source.x) * 0.5,
+          source.y,
+          source.x + (target.x - source.x) * 0.5,
+          target.y,
+          target.x,
+          target.y
+        );
       } else {
         ctx.moveTo(source.x, source.y);
         ctx.lineTo(target.x, target.y);
       }
       
-      if (link.classification === "relay") {
-        ctx.setLineDash([5 / zoom, 4 / zoom]);
+      if (isRelay) {
+        ctx.setLineDash([4 / zoom, 3 / zoom]);
       }
       
       ctx.stroke();
@@ -3365,9 +3602,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
       const pos = positions.get(node.id) ?? node;
       const isSelected = selectedNode?.id === node.id;
       const isHovered = hoveredNodeId === node.id;
-      const baseRadius = denseGraph ? (node.kind === "source" ? 18 : 12) : node.kind === "source" ? 34 : 25;
-
-      const drawRadius = baseRadius / zoom;
+      const visual = graphNodeVisual(node, visualScale, layoutMode === "sankey");
 
       let fillStyle = "#ffffff";
       let strokeStyle = "#9aa8b5";
@@ -3387,18 +3622,16 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
       }
 
       let strokeWidth = 2.5;
-      if (denseGraph) strokeWidth = 2;
+      if (denseGraph) strokeWidth = 1.8;
       if (isSelected) strokeWidth = 4;
       else if (isHovered) strokeWidth = 3.5;
 
       const drawStrokeWidth = strokeWidth / zoom;
 
       if (node.kind === "source") {
-        // Draw as vertical rounded rectangle phone shape!
-        const charCount = String(node.label).length;
-        const w = Math.max(drawRadius * 1.35, (charCount * 8.0) / zoom);
-        const h = drawRadius * 1.95;
-        const r = Math.min(12 / zoom, drawRadius * 0.38);
+        const w = visual.width;
+        const h = visual.height;
+        const r = 6;
         
         ctx.save();
         ctx.beginPath();
@@ -3421,26 +3654,31 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
         ctx.fill();
         ctx.stroke();
 
-        // Draw smartphone speaker slot and home button details
-        if (baseRadius >= 12) {
-          ctx.beginPath();
-          ctx.moveTo(pos.x - w / 4, pos.y - h / 2 + 5 / zoom);
-          ctx.lineTo(pos.x + w / 4, pos.y - h / 2 + 5 / zoom);
-          ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
-          ctx.lineWidth = 1.5 / zoom;
-          ctx.stroke();
-
-          ctx.beginPath();
-          ctx.arc(pos.x, pos.y + h / 2 - 6 / zoom, 2.5 / zoom, 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
-          ctx.fill();
+        ctx.beginPath();
+        const iconX = pos.x - w / 2 + 10;
+        const iconY = pos.y;
+        const iw = 6;
+        const ih = 10;
+        if (ctx.roundRect) {
+          ctx.roundRect(iconX - iw / 2, iconY - ih / 2, iw, ih, 1.5);
+        } else {
+          ctx.rect(iconX - iw / 2, iconY - ih / 2, iw, ih);
         }
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.75)";
+        ctx.lineWidth = 1 / zoom;
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.arc(iconX, iconY + ih / 2 - 2, 0.5, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255, 255, 255, 0.75)";
+        ctx.fill();
+
         ctx.restore();
       } else {
-        // Draw as standard circle node!
+        const r = visual.radius;
         ctx.save();
         ctx.beginPath();
-        ctx.arc(pos.x, pos.y, drawRadius, 0, Math.PI * 2);
+        ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
         ctx.fillStyle = fillStyle;
         ctx.strokeStyle = strokeStyle;
         ctx.lineWidth = drawStrokeWidth;
@@ -3452,9 +3690,9 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
         ctx.restore();
       }
 
-      // Draw inside glyphs (only for non-source nodes, since source nodes are already phone-shaped!)
-      if (baseRadius >= 12 && zoom > 0.55) {
-        const glyphSize = drawRadius * 0.9;
+      const hideGlyphs = denseGraph;
+      if (!hideGlyphs && visual.radius >= 8 && zoom > 0.55) {
+        const glyphSize = visual.radius * 0.9;
         if (node.kind === "p2p" || (node.kind !== "source" && node.kind !== "relay" && node.kind !== "unknown")) {
           drawServerIcon(ctx, pos.x, pos.y, glyphSize);
         } else if (node.kind === "relay") {
@@ -3463,9 +3701,10 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
       }
 
       if (node.score >= 0.7 && node.kind !== "source") {
-        const badgeX = pos.x + drawRadius * 0.7;
-        const badgeY = pos.y + drawRadius * 0.7;
-        drawShieldWarningBadge(ctx, badgeX, badgeY, drawRadius * 0.6);
+        const r = visual.radius || visual.width / 2;
+        const badgeX = pos.x + r * 0.7;
+        const badgeY = pos.y + r * 0.7;
+        drawShieldWarningBadge(ctx, badgeX, badgeY, r * 0.6);
       }
 
       const showTitle = !denseGraph || isSelected || isHovered || node.kind === "source";
@@ -3474,7 +3713,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.scale(dpr, dpr);
 
-        const baseFontSize = denseGraph ? (node.kind === "source" ? 9 : 8) : 12;
+        const baseFontSize = denseGraph ? (node.kind === "source" ? 9 : 8) : 11;
         ctx.font = `bold ${baseFontSize}px var(--font-mono, monospace)`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -3483,9 +3722,13 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
         
         const screenX = pos.x * zoom + pan.x;
         const screenY = pos.y * zoom + pan.y;
-        const screenTextY = node.kind === "source" ? screenY : screenY + 3;
-
-        ctx.fillText(node.label, screenX, screenTextY);
+        
+        if (node.kind === "source") {
+          const textShift = 4 * zoom;
+          ctx.fillText(node.label, screenX + textShift, screenY);
+        } else {
+          ctx.fillText(node.label, screenX, screenY + 2);
+        }
         ctx.restore();
       }
 
@@ -3502,8 +3745,9 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
 
         const screenX = pos.x * zoom + pan.x;
         const screenY = pos.y * zoom + pan.y;
+        const r = visual.radius || visual.height / 2;
 
-        ctx.fillText(node.kind === "source" ? "A-party" : node.operator, screenX, screenY + baseRadius + 6);
+        ctx.fillText(node.kind === "source" ? "A-party" : node.operator, screenX, screenY + r * zoom + 6);
         ctx.restore();
       }
     });
@@ -3513,7 +3757,7 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
   }, [graph, positions, zoom, pan, selectedNode, selectedEdge, hoveredNodeId, denseGraph, showLinkLabels, layoutMode]);
 
   return (
-    <div className={`network-workspace ${denseGraph ? "is-dense" : ""}`}>
+    <div ref={workspaceRef} className={`network-workspace graph-layout-${layoutMode} ${denseGraph ? "is-dense" : ""} ${isGraphFullscreen ? "is-fullscreen" : ""}`}>
       <div className="network-stage">
         <div className="graph-statusbar">
           <GraphMetric label="Sessions" value={graph.metrics.sessions} />
@@ -3544,6 +3788,14 @@ function NetworkGraph({ graphData, selected, onSelect, onExtract, onFocusSource,
             <button type="button" onClick={() => zoomBy(-0.15)} aria-label="Zoom out" data-tooltip="Zoom out"><ZoomOut size={16} /></button>
             <button type="button" onClick={fitGraph} aria-label="Fit graph" data-tooltip="Fit graph"><LocateFixed size={16} /></button>
             <button type="button" onClick={resetGraph} aria-label="Reset graph" data-tooltip="Reset graph"><RotateCcw size={16} /></button>
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              aria-label={isGraphFullscreen ? "Exit fullscreen" : "Fullscreen graph"}
+              data-tooltip={isGraphFullscreen ? "Exit fullscreen" : "Fullscreen graph"}
+            >
+              {isGraphFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            </button>
           </div>
         </div>
       </div>

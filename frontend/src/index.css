@@ -4170,3 +4170,67 @@ tbody tr:hover {
 .premium-datepicker__footer-btn:hover {
   background: var(--color-brand-subtle);
 }
+
+/* ── Communication Map Desktop Upgrades ───────────────────────── */
+.network-workspace {
+  container-type: inline-size;
+}
+
+.network-workspace.graph-layout-sankey .network-canvas.graph-canvas {
+  background:
+    linear-gradient(90deg, rgba(74, 203, 214, 0.04) 1px, transparent 1px),
+    var(--color-bg-primary, #0c1923);
+  background-size: 72px 100%;
+}
+
+.network-canvas.graph-canvas canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.network-workspace.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  gap: 12px;
+  width: 100vw;
+  height: 100vh;
+  min-height: 0;
+  padding: 12px;
+  background: var(--color-bg-primary, #0c1923);
+}
+
+.network-workspace.is-fullscreen .network-stage,
+.network-workspace.is-fullscreen .graph-inspector {
+  min-height: 0;
+  height: 100%;
+}
+
+.network-workspace.is-fullscreen .network-canvas.graph-canvas {
+  height: 100%;
+  min-height: 0;
+}
+
+.network-workspace.is-fullscreen .graph-statusbar {
+  padding: 8px 10px;
+}
+
+.network-workspace.is-fullscreen .graph-metric {
+  min-width: 70px;
+  padding: 6px 8px;
+}
+
+@media (max-width: 980px) {
+  .network-workspace.is-fullscreen {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .network-workspace.is-fullscreen .graph-inspector {
+    max-height: 34vh;
+    overflow: auto;
+  }
+}
