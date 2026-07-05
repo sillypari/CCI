@@ -32,23 +32,23 @@ function Stop-ListenerIfApproved {
 
   $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Sort-Object -Property OwningProcess -Unique)
   foreach ($listener in $listeners) {
-    $pid = [int] $listener.OwningProcess
-    if ($pid -le 0) { continue }
+    $owningPid = [int] $listener.OwningProcess
+    if ($owningPid -le 0) { continue }
 
-    $commandLine = Get-CommandLineForPid -ProcessId $pid
+    $commandLine = Get-CommandLineForPid -ProcessId $owningPid
     $commandLineLower = $commandLine.ToLowerInvariant()
     $rootLower = $Root.ToLowerInvariant()
     $isThisProject = $commandLineLower.Contains($rootLower)
     $isDevServer = $commandLineLower.Contains("uvicorn") -or $commandLineLower.Contains("vite") -or $commandLineLower.Contains("app.main:app")
 
     if ($isThisProject -and $isDevServer) {
-      Write-Host "Stopping stale Pramaan dev server PID $pid on port $Port."
-      Stop-Process -Id $pid -Force -ErrorAction Stop
+      Write-Host "Stopping stale Pramaan dev server PID $owningPid on port $Port."
+      Stop-Process -Id $owningPid -Force -ErrorAction Stop
       continue
     }
 
     Write-Host ""
-    Write-Host "Port $Port is already in use by PID $pid."
+    Write-Host "Port $Port is already in use by PID $owningPid."
     if ($commandLine) {
       Write-Host "Command: $commandLine"
     } else {
@@ -57,8 +57,8 @@ function Stop-ListenerIfApproved {
     Write-Host "This can make the frontend talk to the wrong backend."
     $answer = Read-Host "Stop this process now? Type Y to stop it, or anything else to abort"
     if ($answer -match "^[Yy]$") {
-      Stop-Process -Id $pid -Force -ErrorAction Stop
-      Write-Host "Stopped PID $pid."
+      Stop-Process -Id $owningPid -Force -ErrorAction Stop
+      Write-Host "Stopped PID $owningPid."
     } else {
       throw "Port $Port is occupied. Startup aborted."
     }
