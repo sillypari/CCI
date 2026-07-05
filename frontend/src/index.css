@@ -485,6 +485,12 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   font-weight: 600;
 }
 
+.button span {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
 .button.primary {
   background: var(--color-brand);
   color: white;
