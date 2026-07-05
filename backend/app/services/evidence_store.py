@@ -813,7 +813,7 @@ class EvidenceStore:
 
         sessions: list[SessionRecord] = []
         quarantine: list[QuarantineRecord] = []
-        chunk_log = max(1, len(rows) // 20)
+        chunk_log = min(5000, max(1, len(rows) // 20))
         for row_number, row in enumerate(rows, start=1):
             row_filename = self._safe_filename(str(row.get("source_file") or safe_filename))
             try:
