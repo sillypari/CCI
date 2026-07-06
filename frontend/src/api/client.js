@@ -99,6 +99,7 @@ export const api = {
   ipReport: (ip) => request(`/reports/ip/${encodeURIComponent(ip)}`),
   commonApplications: (query = "") => request(`/reports/common-applications${query}`),
   imeiFrequency: (query = "") => request(`/reports/imei-frequency${query}`),
+  macFrequency: (query = "") => request(`/reports/mac-frequency${query}`),
   locationSummary: (query = "") => request(`/reports/location-summary${query}`),
   sessionCsvUrl: (query = "") => `${API_URL}/reports/sessions.csv${query}`,
   graphJsonUrl: (query = "") => `${API_URL}/graph/export.json${query}`,

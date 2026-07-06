@@ -22,14 +22,14 @@
 
 Pramaan IPDR is a smart investigation workflow for extracting and identifying B-party public IP addresses, mobile endpoints, and communication relationships from IPDR logs. The project is designed for law-enforcement investigation teams that need to normalize operator-provided IPDR files, map A-party to B-party interactions, reduce relay/noise traffic, and prepare actionable request packages with an auditable evidence trail.
 
-This repository contains a working Phase 1/Phase 2 hybrid implementation with a FastAPI backend, a Vite React dashboard, persistent local evidence storage, IPDR parsing, operator format validation, case management, configurable import specifications, IP classification, extraction workflows, communication mapping, timeline analytics, investigation reports, export artifacts, and request-package generation. The latest build also includes a score-ranked Investigation Cockpit, graph clusters and insight cards, matrix view, richer PoI/IMEI reporting, PDF/XLSX exports, upload/job deletion, persistence reset, and a generated user manual.
+This repository contains a working Phase 1/Phase 2 hybrid implementation with a FastAPI backend, a Vite React dashboard, persistent local evidence storage, IPDR parsing, operator format validation, case management, configurable import specifications, IP classification, extraction workflows, communication mapping, timeline analytics, investigation reports, export artifacts, and request-package generation. The latest build also includes a score-ranked Investigation Cockpit, graph clusters and insight cards, matrix view, richer PoI/IMEI/MAC reporting, fixed-line DSL IPDR normalization, polished session date-time filters, PDF/XLSX exports, upload/job deletion, persistence reset, and a generated user manual.
 
 ---
 
 ## Visual Walkthrough
 
 ### Dashboard Overview
-The main dashboard displays active IMEI devices, cell tower location hotspots with day/night splits, active VoIP applications, and a live stream of ingested sessions.
+The main dashboard displays active IMEI devices, fixed-line MAC reuse signals, cell tower location hotspots with day/night splits, active VoIP applications, and a live stream of ingested sessions.
 <p align="center">
   <img src="Screenshots/dashboard.png" width="75%" alt="Dashboard Overview"/>
 </p>
@@ -53,10 +53,13 @@ View global IMEI device frequencies and automatically identify shared handsets a
 </p>
 
 ### Session Explorer and Advanced Parallel Filters
-Query session databases and filter by IPs, Cell IDs, IMEIs, and multi-window parallel date-time slots.
+Query session databases and filter by IPs, Cell IDs, IMEIs, MAC addresses, access identifiers, user type, and multi-window parallel date-time slots with custom date and time pickers.
 <p align="center">
   <img src="Screenshots/session.png" width="75%" alt="Session Explorer"/>
 </p>
+
+### Fixed-Line MAC Intelligence
+Review broadband/DSL evidence through MAC address reuse, access identifier overlap, source public IP rotation, and top destination pivots. This is intended for IPDR files where the A-party is a DSL/PPPoE/account identifier instead of a mobile MSISDN.
 
 
 ### Request Packages and Ingestion Status
@@ -108,20 +111,21 @@ This repository is a functional local implementation designed for hackathon vali
 Implemented capabilities:
 
 - Current graph responses include scored nodes and edges, first/last seen timestamps, cluster IDs, metadata samples, omitted node/edge counts, total source/endpoint counts, server-generated investigation insights, and view metadata describing the active graph query.
-- Current frontend visualization avoids treating large IPDR graphs as a single raw hairball. It starts from ranked overview or a focused entity, then lets the investigator narrow by score, time, classification, hop depth, relay visibility, rank mode, and layout.
+- Current frontend visualization avoids treating large IPDR graphs as a single raw hairball. It starts from ranked overview or a focused entity, then lets the investigator narrow by score, time, classification, hop depth, relay visibility, rank mode, layout, and MAC address for fixed-line broadband evidence.
 - The app now includes a generated PDF user manual under `UserManual/Pramaan_IPDR.pdf`.
 
 - FastAPI API service with health, case, import-specification, upload, session, extraction, graph, analytics, report, package, search, audit, and settings endpoints.
 - Case and Upload Deletion: Fully integrated deletion workflow on both the backend and frontend. Deleting a case re-associates orphan uploads back to the default General Evidence Intake case.
 - Specific Indian Operator Classification: Refined offline IP decoder from generic Indian ISP to map prefixes to specific operators: Reliance Jio (AS55836), Bharti Airtel (AS9498), and Vodafone Idea (AS55410).
-- Advanced Explorer Filters: Added a slider-toggle Filters drawer in the Session Explorer to filter by Target IP, Application, Domain, Cell Tower ID, IMEI, and Date-Time ranges in both Serial (single range) and Parallel (multiple range slots) modes.
+- Advanced Explorer Filters: Added a slider-toggle Filters drawer in the Session Explorer to filter by Target IP, Application, Domain, Cell Tower ID, IMEI, MAC address, source public IP, access ID, user type, and Date-Time ranges in both Serial (single range) and Parallel (multiple range slots) modes. Date and time selection uses custom picker controls instead of native browser calendar widgets.
 - POI App Duration Grid and Bar Chart: The PoI deep dive tab includes a Top Applications Grid (Platform, Sessions, Cumulative Duration) and a horizontal Bar Graph displaying app durations.
 - IMEI Suspect Sharing Details: The Handset and IMEI Intelligence tab maps the Type Allocation Code (TAC) and displays a list of suspects sharing the same device (Used by: MSISDN1, MSISDN2).
+- MAC Intelligence: Fixed-line broadband uploads now surface MAC address reuse, access identifier overlap, public source IP rotation, top destinations, suspicious reuse patterns, a dedicated MAC Intelligence page, and MAC-focused map/session pivots.
 - GIS Leaflet Map Integration: Embedded the interactive Leaflet Map directly at the bottom of the Reports Builder page. It displays day/night cell tower location summaries, calculates circle radii, and filters coordinates in real-time using geofences.
 - Upload Ingestion: Through a required Polars parser for CSV, TSV, TXT, JSON, Excel-style IPDR files, and ZIP batches, with automatic delimiter handling, validation-only checks, format reporting, persistence, and row quarantine reporting.
 - Case-scoped evidence intake so uploads, sessions, graphs, analytics, and reports can be tied to an investigation workspace.
-- Custom import specifications for operator-specific column mappings, including DoT IPDR/NAT SYSLOG-style source, translated, destination, IMEI, domain, and cell-location fields.
-- Session normalization into a common schema covering A-party MSISDN/access identifier, source/NAT endpoints, true B-party destination IP/port, domain, cell ID, city/state/country, latitude/longitude, IMEI, IMSI, protocol, bytes, and timestamps.
+- Custom import specifications for operator-specific column mappings, including DoT IPDR, NAT SYSLOG, fixed-line DSL, source/private/public IP, translated, destination, MAC, IMEI, domain, and cell-location fields.
+- Session normalization into a common schema covering A-party MSISDN/access identifier, source/NAT endpoints, fixed-line public source IP, true B-party destination IP/port, domain, cell ID, city/state/country, latitude/longitude, MAC address, IMEI, IMSI, protocol, bytes, and timestamps.
 - Classification of likely peer-to-peer traffic, relay/platform traffic, and unknown flows.
 - Known platform relay range detection for services such as WhatsApp, Telegram, and Google ranges included in the classifier.
 - Operator range tagging for selected Indian telecom ranges.
@@ -131,12 +135,12 @@ Implemented capabilities:
 - Suspicious-pattern detection for bursts, repeated direct contacts, shared endpoints, relay-heavy behavior, and quarantine review.
 - Timeline analytics from year down to second-level buckets.
 - Application summary and common-application reports for comparing app/destination usage across PoIs.
-- PoI summary, IP summary, IMEI frequency, day/night location summary, WhatsApp/Meta relay reports, common WhatsApp reports, sessions CSV/XLSX export, PoI PDF export, and CSV/HTML report exports for PoI and destination IP summaries.
+- PoI summary, IP summary, IMEI frequency, MAC frequency, day/night location summary, WhatsApp/Meta relay reports, common WhatsApp reports, sessions CSV/XLSX export, PoI PDF export, and CSV/HTML report exports for PoI and destination IP summaries.
 - Request-package generation for actionable B-party candidates.
 - Synchronous ingestion job ledger for upload status, progress, archive-member context, and error review.
 - SQLite persistence snapshot endpoint for cases, uploads, ingestion jobs, sessions, reports, packages, and audit logs.
 - Audit log surface for important workflow events.
-- React dashboard with dashboard, cases, upload, sessions, extraction, investigation cockpit, analytics, reports, dedicated PoI dossier, IMEI intelligence, packages, audit log, and settings pages.
+- React dashboard with dashboard, cases, upload, sessions, extraction, investigation cockpit, analytics, reports, dedicated PoI dossier, IMEI intelligence, MAC intelligence, packages, audit log, and settings pages.
 - App branding through Pramaan IPDR logo/favicons, Inter body font, JetBrains Mono technical font, and a restrained investigation-grade UI.
 - Docker Compose wiring for API, frontend, TimescaleDB, and Redis.
 - Unit and API tests for classifier, ingestion, extraction, graph, quarantine, and API behavior.
@@ -214,7 +218,7 @@ Frontend:
 - D3 and D3 force simulation
 - TanStack Table for planned large data tables
 - React Leaflet and Leaflet for location/geofence maps
-- Recharts for IMEI and report visualizations
+- Recharts for IMEI, MAC, and report visualizations
 - Lucide React icons
 - Inter and JetBrains Mono font packages
 
@@ -235,13 +239,13 @@ Infrastructure wiring:
 5. The backend parses the file and normalizes records into session objects.
 6. Each session is classified as p2p, relay, or unknown using destination IP ranges, destination ports, byte counts, and operator/platform hints.
 7. The dashboard presents case count, upload health, normalized sessions, candidate counts, quarantine count, and actionable rate.
-8. The investigator searches or filters sessions by MSISDN, IP, IMEI, application, domain, cell ID, case, date range, operator, or classification.
-9. The investigator opens the Investigation Cockpit to inspect ranked A-party to B-party relationships with focus search, score threshold, classification filter, hop depth, time window, layout mode, graph metrics, clusters, insights, node details, link evidence, matrix view, zoom, pan, and drag controls.
+8. The investigator searches or filters sessions by MSISDN/access identifier, IP, source public IP, MAC address, user type, IMEI, application, domain, cell ID, case, date range, operator, or classification.
+9. The investigator opens the Investigation Cockpit to inspect ranked A-party to B-party relationships with focus search, MAC/IP/IMEI/MSISDN focus modes, score threshold, classification filter, hop depth, time window, layout mode, graph metrics, clusters, insights, node details, link evidence, matrix view, zoom, pan, and drag controls.
 10. The investigator exports the active graph slice as JSON or GraphML when external analysis is needed.
 11. The investigator runs extraction for an A-party MSISDN.
 12. The system returns B-party candidates with evidence references and confidence.
 13. Actionable candidates can be converted into request-package payloads.
-14. Analytics and Reports provide timeline drill-down, suspicious-pattern review, PoI summary, IP summary, common applications, WhatsApp/Meta indicators, IMEI frequency, day/night location summary, GIS/geofence view, PDF briefs, XLSX export, and CSV/HTML exports.
+14. Analytics and Reports provide timeline drill-down, suspicious-pattern review, PoI summary, IP summary, common applications, WhatsApp/Meta indicators, IMEI frequency, MAC frequency, day/night location summary, GIS/geofence view, PDF briefs, XLSX export, and CSV/HTML exports.
 15. Settings can write a SQLite snapshot for local evidence review or downstream tooling.
 16. Audit logs record investigation workflow events for traceability.
 
@@ -261,15 +265,20 @@ Required investigation columns:
 | `destination_ip` | True B-party destination IP | `49.36.128.45` |
 | `destination_port` | True B-party destination port | `45892` |
 
-Recommended DoT/NAT columns:
+For fixed-line ISP records, the built-in Fixed Line DSL adapter accepts `DSL User ID`, `Broadband User ID`, `PPPoE User ID`, `Radius User Name`, or similar access-account fields as the A-party identifier when no mobile MSISDN is present. Headers such as `Source Private IPv4`, `Source Public IPv4`, `Source Public IPv6`, `Mac Address`, and `User Type` are normalized into the same session schema used by mobile IPDR evidence.
+
+Recommended DoT/NAT/fixed-line columns:
 
 | Column | Description | Example |
 | --- | --- | --- |
 | `translated_ip` | NAT translated/public IP. This is not treated as B-party. | `49.37.10.21` |
 | `translated_port` | NAT translated/public port | `45892` |
+| `source_public_ip` | Fixed-line public source IPv4/IPv6 when supplied separately from private source IP | `103.10.20.30` |
 | `started_at` or `start_date` + `start_time` | IST session start | `2026-07-03T10:01:00+05:30` |
 | `ended_at` or `end_date` + `end_time` | IST session end | `2026-07-03T10:06:42+05:30` |
+| `event_started_at` | Fixed-line allocation/event start time when distinct from session start | `2026-07-06T14:20:00+05:30` |
 | `ip_allocation` | Static or dynamic allocation | `Dynamic` |
+| `source_mac` | Customer router/ONT/CPE MAC address when present | `AA:BB:CC:DD:EE:FF` |
 | `imei`, `imsi`, `sim_type` | Mobile device/SIM identifiers when available | `356789012345678` |
 | `protocol` | Protocol name | `UDP` |
 | `bytes_up` / `bytes_down` | Traffic counters | `182044` / `880122` |
@@ -419,8 +428,13 @@ Use Sessions to inspect normalized IPDR records and verify graph or extraction l
 - Domain or hostname.
 - Cell tower or location identifier.
 - IMEI.
+- MAC address.
+- Source public IP.
+- Access ID such as DSL user ID, PPPoE user ID, or radius username.
+- User type such as dynamic or static allocation.
 - Serial date-time filtering with one continuous time window.
 - Parallel date-time filtering with multiple independent windows for incident correlation.
+- Side-by-side custom date and time pickers for advanced time-window selection.
 
 The session table remains the source for row-level verification after graph exploration or report generation.
 
@@ -505,6 +519,18 @@ The page includes:
 - TAC-based deterministic handset hints for demo data.
 - Shared-device warning when one IMEI appears across multiple source MSISDNs.
 
+### MAC Intelligence
+
+Use MAC Intelligence for fixed-line broadband and DSL evidence where the customer device, CPE, ONT, or router MAC address is present in the operator IPDR. This page is useful when the same MAC appears across multiple access identifiers or public source IPs.
+
+The page includes:
+
+- MAC frequency chart and reuse matrix.
+- Access identifiers seen behind each MAC address.
+- Public source IP rotation for the same MAC.
+- Top destination endpoints and first/last seen timestamps.
+- Direct pivots back into session evidence and MAC-focused graph views.
+
 ### Request Packages
 
 Use Request Packages to review generated payloads for actionable candidates. These payloads collect the target operator, destination endpoint, timestamp, protocol, classification, confidence, and evidence chain.
@@ -536,7 +562,7 @@ IPDR data can grow from thousands to millions of rows. A professional investigat
 | Principle | Implementation in Pramaan IPDR |
 | --- | --- |
 | Aggregate before rendering | The backend groups sessions into source-to-destination edges and samples evidence rows per edge. |
-| Focus first | `/api/graph` accepts `focus` and `focus_type` so investigators can start from an MSISDN, IP, IMEI, IMSI, or broad search value. |
+| Focus first | `/api/graph` accepts `focus` and `focus_type` so investigators can start from an MSISDN, IP, IMEI, IMSI, MAC address, or broad search value. |
 | Bound the slice | `limit` and `scan_limit` prevent the frontend from receiving unbounded graph payloads. |
 | Rank by investigation value | `rank_by=score` combines confidence, class, repeat activity, bytes, duration, shared endpoints, and night activity. Other modes include `p2p`, `confidence`, `volume`, and `recent`. |
 | Suppress noise | `include_relay=false`, classification filters, and score thresholds reduce platform relay clutter. |
@@ -577,7 +603,7 @@ http://localhost:8000/api
 | `DELETE` | `/uploads/{upload_id}` | Delete an upload and remove its associated sessions/evidence |
 | `GET` | `/uploads/{upload_id}/status` | Read upload processing status |
 | `GET` | `/uploads/{upload_id}/quarantine` | List row-level quarantine reasons for an upload |
-| `GET` | `/sessions` | List normalized sessions with filters for case, MSISDN, class, IP, IMEI, app, domain, cell ID, and date range |
+| `GET` | `/sessions` | List normalized sessions with filters for case, MSISDN/access ID, class, destination IP, source public IP, MAC, user type, IMEI, app, domain, cell ID, and date range |
 | `GET` | `/sessions/{session_id}` | Read a single session |
 | `GET` | `/graph` | Return backend-aggregated graph nodes, links, sessions, and metrics |
 | `GET` | `/graph/export.json` | Export a graph slice as JSON |
@@ -592,6 +618,7 @@ http://localhost:8000/api
 | `GET` | `/reports/ip/{destination_ip}` | Preview destination IP summary report |
 | `GET` | `/reports/common-applications` | List applications/destination IPs shared across PoIs |
 | `GET` | `/reports/imei-frequency` | List IMEI frequency and shared-handset evidence |
+| `GET` | `/reports/mac-frequency` | List MAC address frequency, access identifier reuse, public source IP rotation, and top destinations |
 | `GET` | `/reports/location-summary` | List cell/location day-night summaries when location columns exist |
 | `GET` | `/reports/poi/{msisdn}.csv` | Export a PoI summary as CSV |
 | `GET` | `/reports/poi/{msisdn}.html` | Export a PoI summary as HTML |
@@ -617,8 +644,8 @@ http://localhost:8000/api
 
 | Parameter | Values | Purpose |
 | --- | --- | --- |
-| `focus` | string | Entity value to start from, such as MSISDN, destination IP, IMEI, IMSI, or free text. |
-| `focus_type` | `msisdn`, `ip`, `endpoint`, `imei`, `imsi`, `any` | Tells the backend how to interpret `focus`. |
+| `focus` | string | Entity value to start from, such as MSISDN/access ID, destination IP, IMEI, IMSI, MAC address, or free text. |
+| `focus_type` | `msisdn`, `ip`, `endpoint`, `imei`, `imsi`, `mac`, `any` | Tells the backend how to interpret `focus`. |
 | `classification` | `p2p`, `relay`, `unknown` | Restricts graph sessions to one classification. Omit for all classes. |
 | `case_id` | case ID | Restricts graph analysis to one investigation case. |
 | `limit` | 1 to 5000 | Maximum visible graph edges returned. The UI defaults to bounded top slices. |
@@ -640,6 +667,12 @@ Example dense-case query with relay suppression and score threshold:
 
 ```powershell
 curl.exe "http://localhost:8000/api/graph?include_relay=false&min_score=0.45&rank_by=p2p&limit=250"
+```
+
+Example MAC-focused graph query:
+
+```powershell
+curl.exe "http://localhost:8000/api/graph?focus=AA:BB:CC:DD:EE:FF&focus_type=mac&hops=1&limit=100"
 ```
 
 Graph response highlights:
@@ -670,6 +703,18 @@ Example session query:
 
 ```powershell
 curl.exe "http://localhost:8000/api/sessions?msisdn=919876543210&classification=p2p&limit=50"
+```
+
+Example fixed-line session query:
+
+```powershell
+curl.exe "http://localhost:8000/api/sessions?source_mac=AA:BB:CC:DD:EE:FF&source_public_ip=103.10.20.30&user_type=Dynamic"
+```
+
+Example MAC frequency report:
+
+```powershell
+curl.exe "http://localhost:8000/api/reports/mac-frequency?limit=20"
 ```
 
 ---
@@ -708,7 +753,7 @@ The current build supports enrichment, but approved production datasets are stil
 | Platform relay detection | Uses configured platform ranges and known demo/platform mappings for services such as Meta/WhatsApp, Telegram, Google, and custom ranges. | Maintain legally approved, versioned relay and platform infrastructure ranges. |
 | TAC/handset lookup | Uses deterministic demo TAC hints in `tac_decoder.py`. | Replace with licensed or department-approved TAC database. |
 | Cell location lookup | Uses supplied latitude/longitude when present and deterministic demo coordinates for cell IDs when needed. | Replace with official cell tower master data and operator-provided site metadata. |
-| Operator adapters | Includes canonical and operator-shaped mappings for DoT IPDR, NAT SYSLOG, Airtel, Jio, Vodafone Idea, BSNL, and generic uploads. | Validate against real sanitized operator samples and update import specifications. |
+| Operator adapters | Includes canonical and operator-shaped mappings for DoT IPDR, NAT SYSLOG, Fixed Line DSL, Airtel, Jio, Vodafone Idea, BSNL, and generic uploads. | Validate against real sanitized operator samples and update import specifications. |
 | External enrichment | No uncontrolled third-party OSINT or caller-ID integrations are claimed. | Add only after legal approval, audit controls, and data-source licensing. |
 
 Synthetic fixtures under `backend/tests/fixtures/` are for validation and demonstration. Do not commit real IPDR logs, subscriber records, or live investigation exports.

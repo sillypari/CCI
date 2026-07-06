@@ -40,6 +40,7 @@ from app.schemas.core import (
     ImeiFrequencyReport,
     IpSummaryReport,
     LocationSummaryReport,
+    MacFrequencyReport,
     PersistenceStatus,
     PlatformRange,
     PoiSummaryReport,
@@ -77,17 +78,27 @@ COLUMN_ALIASES = {
         "landline_msisdn_mdn_leased_circuit_id",
         "landline_msisdn_mdn_leased_circuit_id_for_internet_access",
         "access_identifier",
+        "dsl_user_id",
+        "dsl_userid",
+        "broadband_user_id",
+        "internet_user_id",
+        "pppoe_user_id",
+        "radius_user_name",
+        "username",
     ),
     "subscriber_name": ("subscriber_name", "customer_name", "name_of_person_organization", "name_of_person_or_organization", "name"),
     "subscriber_address": ("subscriber_address", "customer_address", "address"),
     "contact_number": ("contact_number", "contact_no", "contact"),
     "alternate_contact_number": ("alternate_contact_number", "alternate_contact_no", "alternate_contact"),
     "email": ("email", "email_address", "e_mail_address"),
-    "access_identifier": ("access_identifier", "landline_msisdn_mdn_leased_circuit_id", "leased_circuit_id", "circuit_id", "mdn"),
-    "user_id": ("user_id", "user_id_for_internet_access", "internet_user_id", "authentication_user_id"),
+    "access_identifier": ("access_identifier", "dsl_user_id", "dsl_userid", "broadband_user_id", "landline_msisdn_mdn_leased_circuit_id", "leased_circuit_id", "circuit_id", "mdn"),
+    "user_id": ("user_id", "dsl_user_id", "dsl_userid", "user_id_for_internet_access", "internet_user_id", "authentication_user_id", "pppoe_user_id", "radius_user_name", "username"),
     "source_ip": (
         "source_ip",
         "source_ip_address",
+        "source_private_ip",
+        "source_private_ipv4",
+        "source_private_ipv6",
         "src_ip",
         "src_address",
         "private_ip",
@@ -105,6 +116,9 @@ COLUMN_ALIASES = {
         "source_port",
         "source_port_no",
         "source_port_number",
+        "source_private_port",
+        "source_private_port_no",
+        "source_private_port_number",
         "src_port",
         "private_port",
         "subscriber_port",
@@ -139,6 +153,8 @@ COLUMN_ALIASES = {
     "destination_ip": (
         "destination_ip",
         "destination_ip_address",
+        "destination_ipv4",
+        "destination_ipv6",
         "dest_ip",
         "dst_ip",
         "dst_addr",
@@ -156,6 +172,8 @@ COLUMN_ALIASES = {
         "destination_port",
         "destination_port_no",
         "destination_port_number",
+        "destination_ipv4_port",
+        "destination_ipv6_port",
         "dest_port",
         "dst_port",
         "server_port",
@@ -174,17 +192,20 @@ COLUMN_ALIASES = {
     "country": ("country", "country_name"),
     "latitude": ("latitude", "lat", "tower_latitude", "cell_latitude"),
     "longitude": ("longitude", "lon", "lng", "tower_longitude", "cell_longitude"),
-    "ip_allocation": ("ip_allocation", "static_dynamic_ip_address_allocation", "allocation_type", "ip_address_allocation"),
-    "duration_seconds": ("duration_seconds", "duration", "session_duration", "duration_sec", "duration_s"),
-    "bytes_up": ("bytes_up", "uplink_bytes", "upload_bytes", "tx_bytes", "bytes_sent", "sent_bytes"),
-    "bytes_down": ("bytes_down", "downlink_bytes", "download_bytes", "rx_bytes", "bytes_received", "received_bytes"),
+    "ip_allocation": ("ip_allocation", "static_dynamic_ip_address_allocation", "allocation_type", "ip_address_allocation", "user_type"),
+    "user_type": ("user_type", "subscriber_user_type", "connection_type"),
+    "duration_seconds": ("duration_seconds", "duration", "duration_in_seconds", "session_duration", "session_duration_seconds", "duration_sec", "duration_s"),
+    "bytes_up": ("bytes_up", "uplink_bytes", "uplink_volume", "upload_bytes", "upload_volume", "tx_bytes", "bytes_sent", "sent_bytes"),
+    "bytes_down": ("bytes_down", "downlink_bytes", "downlink_volume", "download_bytes", "download_volume", "rx_bytes", "bytes_received", "received_bytes"),
     "protocol": ("protocol", "ip_protocol", "proto"),
-    "started_at": ("started_at", "start_datetime", "start_date_time", "timestamp", "session_start", "date_time", "datetime"),
+    "event_started_at": ("event_started_at", "event_start_time", "event_start_datetime", "event_start_date_time"),
+    "started_at": ("started_at", "session_start_time", "session_start_datetime", "start_datetime", "start_date_time", "timestamp", "session_start", "date_time", "datetime", "event_start_time"),
     "start_date": ("start_date", "ist_start_date", "start_date_of_ip_address_allocation"),
     "start_time": ("start_time", "ist_start_time", "start_time_of_ip_address_allocation"),
-    "ended_at": ("ended_at", "end_datetime", "end_date_time", "session_end"),
+    "ended_at": ("ended_at", "session_end_time", "session_end_datetime", "end_datetime", "end_date_time", "session_end"),
     "end_date": ("end_date", "ist_end_date", "end_date_of_ip_address_allocation"),
     "end_time": ("end_time", "ist_end_time", "end_time_of_ip_address_allocation"),
+    "source_public_ip": ("source_public_ip", "source_public_ipv4", "source_public_ipv6", "public_source_ip", "public_source_ipv4", "public_source_ipv6", "subscriber_public_ip", "wan_ip", "wan_ipv4", "wan_ipv6"),
     "source_mac": ("source_mac", "source_mac_address", "mac_address", "customer_device_mac"),
     "imei": ("imei", "imei_number"),
     "device_id": ("device_id", "device_identification_number", "other_device_identification_number"),
@@ -192,6 +213,8 @@ COLUMN_ALIASES = {
     "imsi": ("imsi",),
     "sim_type": ("sim_type", "type_of_sim"),
 }
+
+ACCESS_IDENTIFIER_ALIASES = set(COLUMN_ALIASES["access_identifier"]) | set(COLUMN_ALIASES["user_id"])
 
 
 class EvidenceStoreError(Exception):
@@ -290,7 +313,8 @@ class EvidenceStore:
         try:
             payload = json.loads(self.storage_file.read_text(encoding="utf-8"))
             self.cases = [CaseRecord.model_validate(item) for item in payload.get("cases", [])] or self._default_cases()
-            self.import_specs = [ImportSpecification.model_validate(item) for item in payload.get("import_specs", [])] or self._default_import_specs()
+            loaded_import_specs = [ImportSpecification.model_validate(item) for item in payload.get("import_specs", [])]
+            self.import_specs = self._merge_default_import_specs(loaded_import_specs)
             self.uploads = [UploadStatus.model_validate(item) for item in payload.get("uploads", [])]
             self.jobs = [IngestionJob.model_validate(item) for item in payload.get("jobs", [])]
             snapshot_at = payload.get("last_persistence_snapshot_at")
@@ -450,8 +474,46 @@ class EvidenceStore:
                 },
                 created_at=timestamp,
                 updated_at=timestamp,
-            )
+            ),
+            ImportSpecification(
+                id="SPEC-FIXED-LINE-DSL",
+                name="Fixed Line DSL / Broadband IPDR",
+                description="Mapping for fixed-line ISP IPDR records with DSL user ID, public/private source IP, MAC address, and dynamic/static user type.",
+                delimiter=None,
+                mapping={
+                    "msisdn": "DSL User ID",
+                    "access_identifier": "DSL User ID",
+                    "user_id": "DSL User ID",
+                    "event_started_at": "Event Start Time",
+                    "started_at": "Session Start Time",
+                    "ended_at": "Session End Time",
+                    "duration_seconds": "Duration in Seconds",
+                    "bytes_up": "Uplink Volume",
+                    "bytes_down": "Downlink Volume",
+                    "source_public_ip": "Source Public IPv4",
+                    "destination_ip": "Destination IPv4",
+                    "destination_port": "Destination Port",
+                    "source_ip": "Source Private IPv4",
+                    "source_port": "Source Private Port",
+                    "source_mac": "Mac Address",
+                    "ip_allocation": "User Type",
+                    "user_type": "User Type",
+                },
+                created_at=timestamp,
+                updated_at=timestamp,
+            ),
         ]
+
+    def _merge_default_import_specs(self, import_specs: list[ImportSpecification]) -> list[ImportSpecification]:
+        if not import_specs:
+            return self._default_import_specs()
+        merged = list(import_specs)
+        existing_ids = {item.id for item in merged}
+        for default_spec in self._default_import_specs():
+            if default_spec.id not in existing_ids:
+                merged.append(default_spec)
+        return merged
+
     def _default_platform_ranges(self) -> list[PlatformRange]:
         # Realistic static ranges list for communication and VoIP platforms
         ranges: list[PlatformRange] = []
@@ -495,8 +557,21 @@ class EvidenceStore:
             cursor = connection.cursor()
             cursor.execute("SELECT count(*), sum(case when classification='p2p' then 1 else 0 end), sum(case when classification='relay' then 1 else 0 end), sum(case when classification='unknown' then 1 else 0 end), avg(confidence) FROM sessions")
             total_sessions, actionable, relay, unknown, avg_conf = cursor.fetchone()
+            cursor.execute(
+                "SELECT json_extract(payload_json, '$.source_mac'), a_party_msisdn, json_extract(payload_json, '$.source_public_ip') "
+                "FROM sessions WHERE json_extract(payload_json, '$.source_mac') IS NOT NULL OR json_extract(payload_json, '$.source_public_ip') IS NOT NULL"
+            )
+            broadband_rows = cursor.fetchall()
         finally:
             connection.close()
+
+        mac_sources: dict[str, set[str]] = defaultdict(set)
+        source_public_ips: set[str] = set()
+        for source_mac, source_identifier, source_public_ip in broadband_rows:
+            if source_mac:
+                mac_sources[str(source_mac)].add(str(source_identifier))
+            if source_public_ip:
+                source_public_ips.add(str(source_public_ip))
 
         with self._lock:
             return DashboardStats(
@@ -508,6 +583,9 @@ class EvidenceStore:
                 unknown=unknown or 0,
                 quarantined_rows=sum(upload.rows_quarantined for upload in self.uploads),
                 avg_confidence=round(avg_conf, 2) if avg_conf is not None else 0,
+                unique_macs=len(mac_sources),
+                shared_macs=sum(1 for identifiers in mac_sources.values() if len(identifiers) > 1),
+                unique_source_public_ips=len(source_public_ips),
                 latest_upload=max(self.uploads, key=lambda item: item.created_at) if self.uploads else None,
                 top_crime_types=self._crime_type_counts(),
             )
@@ -957,14 +1035,17 @@ class EvidenceStore:
 
     def _session_from_row(self, upload_id: str, filename: str, row_number: int, row: dict[str, Any], case_id: str = "CASE-GENERAL") -> SessionRecord:
         normalized = {self._normalize_key(str(key)): self._clean_value(value) for key, value in row.items() if key is not None}
-        msisdn = self._parse_msisdn(self._first(normalized, "msisdn"), "msisdn")
+        party_value, party_key = self._first_with_key(normalized, "msisdn")
+        msisdn = self._parse_party_identifier(party_value, "msisdn", allow_non_numeric=party_key in ACCESS_IDENTIFIER_ALIASES)
         source_ip, source_port = self._parse_endpoint(normalized, "source_ip", "source_port", "source")
         destination_ip, destination_port = self._parse_endpoint(normalized, "destination_ip", "destination_port", "destination")
         translated_ip, translated_port = self._parse_optional_endpoint(normalized, "translated_ip", "translated_port", "translated")
+        source_public_ip = self._parse_optional_ip(self._optional(normalized, "source_public_ip"), "source_public_ip")
         duration = self._parse_int(self._optional(normalized, "duration_seconds") or "0", "duration_seconds", minimum=0)
         bytes_up = self._parse_int(self._optional(normalized, "bytes_up") or "0", "bytes_up", minimum=0)
         bytes_down = self._parse_int(self._optional(normalized, "bytes_down") or "0", "bytes_down", minimum=0)
         protocol = self._parse_protocol(self._optional(normalized, "protocol") or "UDP")
+        event_started_at = self._timestamp_from_row(normalized, "event_started", row_number, required=False)
         started_at = self._timestamp_from_row(normalized, "started", row_number, required=True)
         ended_at = self._timestamp_from_row(normalized, "ended", row_number, required=False)
         if duration == 0 and ended_at is not None and ended_at >= started_at:
@@ -998,12 +1079,15 @@ class EvidenceStore:
             latitude=self._parse_optional_float(self._optional(normalized, "latitude"), "latitude"),
             longitude=self._parse_optional_float(self._optional(normalized, "longitude"), "longitude"),
             ip_allocation=self._optional(normalized, "ip_allocation"),
+            user_type=self._optional(normalized, "user_type"),
             protocol=protocol,
+            event_started_at=event_started_at,
             started_at=started_at,
             ended_at=ended_at,
             duration_seconds=duration,
             bytes_up=bytes_up,
             bytes_down=bytes_down,
+            source_public_ip=source_public_ip,
             source_mac=self._optional(normalized, "source_mac"),
             imei=self._optional(normalized, "imei"),
             device_id=self._optional(normalized, "device_id"),
@@ -1029,18 +1113,29 @@ class EvidenceStore:
         return str(value).strip()
 
     def _first(self, row: dict[str, str], canonical: str) -> str:
-        value = self._optional(row, canonical)
+        value, _ = self._optional_with_key(row, canonical)
         if value is None:
             aliases = ", ".join(COLUMN_ALIASES[canonical])
             raise RowValidationError(canonical, f"Missing required value. Accepted columns: {aliases}")
         return value
 
+    def _first_with_key(self, row: dict[str, str], canonical: str) -> tuple[str, str]:
+        value, key = self._optional_with_key(row, canonical)
+        if value is None or key is None:
+            aliases = ", ".join(COLUMN_ALIASES[canonical])
+            raise RowValidationError(canonical, f"Missing required value. Accepted columns: {aliases}")
+        return value, key
+
     def _optional(self, row: dict[str, str], canonical: str) -> str | None:
+        value, _ = self._optional_with_key(row, canonical)
+        return value
+
+    def _optional_with_key(self, row: dict[str, str], canonical: str) -> tuple[str | None, str | None]:
         for key in COLUMN_ALIASES[canonical]:
             value = row.get(key)
             if value not in (None, ""):
-                return value
-        return None
+                return value, key
+        return None, None
 
     def _parse_endpoint(self, row: dict[str, str], ip_canonical: str, port_canonical: str, field_prefix: str) -> tuple[str, int]:
         ip_value = self._first(row, ip_canonical)
@@ -1082,10 +1177,16 @@ class EvidenceStore:
         return cleaned, None
 
     def _timestamp_from_row(self, row: dict[str, str], prefix: str, row_number: int, required: bool) -> datetime | None:
-        canonical = "started_at" if prefix == "started" else "ended_at"
+        canonical = {
+            "started": "started_at",
+            "ended": "ended_at",
+            "event_started": "event_started_at",
+        }[prefix]
         combined = self._optional(row, canonical)
         if combined:
             return self._parse_timestamp(combined, row_number, required=required, field=canonical)
+        if prefix == "event_started":
+            return None
         date_value = self._optional(row, "start_date" if prefix == "started" else "end_date")
         time_value = self._optional(row, "start_time" if prefix == "started" else "end_time")
         if date_value and time_value:
@@ -1096,15 +1197,39 @@ class EvidenceStore:
 
     def _parse_msisdn(self, value: str, field: str) -> str:
         digits = re.sub(r"\D", "", value)
+        if digits and not re.search(r"[A-Za-z@]", value):
+            return self._parse_numeric_msisdn(value, field)
+        return self._parse_access_identifier(value, field)
+
+    def _parse_party_identifier(self, value: str, field: str, allow_non_numeric: bool) -> str:
+        if allow_non_numeric:
+            return self._parse_access_identifier(value, field)
+        return self._parse_numeric_msisdn(value, field)
+
+    def _parse_numeric_msisdn(self, value: str, field: str) -> str:
+        digits = re.sub(r"\D", "", value)
         if len(digits) < 4 or len(digits) > 15:
             raise RowValidationError(field, "MSISDN must contain 4 to 15 digits")
         return digits
+
+    def _parse_access_identifier(self, value: str, field: str) -> str:
+        cleaned = re.sub(r"\s+", "", value.strip())
+        if len(cleaned) < 4 or len(cleaned) > 120:
+            raise RowValidationError(field, "Access identifier must contain 4 to 120 visible characters")
+        if not re.search(r"[A-Za-z0-9]", cleaned):
+            raise RowValidationError(field, "Access identifier must contain at least one letter or digit")
+        return cleaned
 
     def _parse_ip(self, value: str, field: str) -> str:
         try:
             return str(ipaddress.ip_address(value))
         except ValueError as exc:
             raise RowValidationError(field, f"Invalid {field}: {value}") from exc
+
+    def _parse_optional_ip(self, value: str | None, field: str) -> str | None:
+        if not value:
+            return None
+        return self._parse_ip(value, field)
 
     def _parse_int(self, value: str, field: str, minimum: int = 0, maximum: int | None = None) -> int:
         try:
@@ -1175,6 +1300,10 @@ class EvidenceStore:
         destination_ip: str | None = None,
         imei: str | None = None,
         imsi: str | None = None,
+        source_mac: str | None = None,
+        source_public_ip: str | None = None,
+        access_identifier: str | None = None,
+        user_type: str | None = None,
         app: str | None = None,
         domain: str | None = None,
         cell_id: str | None = None,
@@ -1187,13 +1316,17 @@ class EvidenceStore:
         params = []
 
         if msisdn:
-            needle_msisdn = re.sub(r"\D", "", msisdn)
-            if len(needle_msisdn) >= 10:
+            raw_identifier = msisdn.strip()
+            needle_msisdn = re.sub(r"\D", "", raw_identifier)
+            if needle_msisdn and not re.search(r"[A-Za-z@]", raw_identifier) and len(needle_msisdn) >= 10:
                 query += " AND a_party_msisdn = ?"
                 params.append(needle_msisdn)
-            else:
+            elif needle_msisdn and not re.search(r"[A-Za-z@]", raw_identifier):
                 query += " AND a_party_msisdn LIKE ?"
                 params.append(f"%{needle_msisdn}%")
+            elif raw_identifier:
+                query += " AND lower(a_party_msisdn) LIKE ?"
+                params.append(f"%{raw_identifier.lower()}%")
         if classification:
             query += " AND classification = ?"
             params.append(classification)
@@ -1217,6 +1350,26 @@ class EvidenceStore:
         if imsi:
             query += " AND json_extract(payload_json, '$.imsi') LIKE ?"
             params.append(f"%{imsi}%")
+        if source_mac:
+            query += " AND lower(json_extract(payload_json, '$.source_mac')) LIKE ?"
+            params.append(f"%{source_mac.lower()}%")
+        if source_public_ip:
+            try:
+                exact_source_public_ip = str(ipaddress.ip_address(source_public_ip))
+            except ValueError:
+                exact_source_public_ip = None
+            if exact_source_public_ip:
+                query += " AND json_extract(payload_json, '$.source_public_ip') = ?"
+                params.append(exact_source_public_ip)
+            else:
+                query += " AND json_extract(payload_json, '$.source_public_ip') LIKE ?"
+                params.append(f"%{source_public_ip}%")
+        if access_identifier:
+            query += " AND (lower(json_extract(payload_json, '$.access_identifier')) LIKE ? OR lower(json_extract(payload_json, '$.user_id')) LIKE ? OR lower(a_party_msisdn) LIKE ?)"
+            params.extend([f"%{access_identifier.lower()}%"] * 3)
+        if user_type:
+            query += " AND lower(json_extract(payload_json, '$.user_type')) LIKE ?"
+            params.append(f"%{user_type.lower()}%")
         if app:
             query += " AND (lower(json_extract(payload_json, '$.app_hint')) LIKE ? OR lower(json_extract(payload_json, '$.operator')) LIKE ?)"
             params.extend([f"%{app.lower()}%", f"%{app.lower()}%"])
@@ -1239,14 +1392,18 @@ class EvidenceStore:
                 " OR lower(destination_ip) LIKE ?"
                 " OR lower(source_ip) LIKE ?"
                 " OR lower(translated_ip) LIKE ?"
+                " OR lower(json_extract(payload_json, '$.source_public_ip')) LIKE ?"
                 " OR lower(json_extract(payload_json, '$.operator')) LIKE ?"
                 " OR lower(json_extract(payload_json, '$.app_hint')) LIKE ?"
                 " OR lower(json_extract(payload_json, '$.domain')) LIKE ?"
                 " OR lower(json_extract(payload_json, '$.cell_id')) LIKE ?"
+                " OR lower(json_extract(payload_json, '$.access_identifier')) LIKE ?"
+                " OR lower(json_extract(payload_json, '$.user_id')) LIKE ?"
+                " OR lower(json_extract(payload_json, '$.source_mac')) LIKE ?"
                 " OR lower(json_extract(payload_json, '$.imei')) LIKE ?"
                 " OR lower(source_file) LIKE ?)"
             )
-            params.extend([needle] * 10)
+            params.extend([needle] * 14)
 
         bounded_limit = max(1, min(limit, 100_000))
         bounded_offset = max(0, offset)
@@ -1282,6 +1439,8 @@ class EvidenceStore:
                 session_id=session.id,
                 source_ip=session.source_ip,
                 source_port=session.source_port,
+                source_public_ip=session.source_public_ip,
+                source_mac=session.source_mac,
                 translated_ip=session.translated_ip,
                 translated_port=session.translated_port,
                 destination_ip=session.destination_ip,
@@ -1329,6 +1488,7 @@ class EvidenceStore:
                 "a_party_msisdn": extraction.requested_msisdn,
                 "source_ip": session.source_ip,
                 "source_port": session.source_port,
+                "source_public_ip": session.source_public_ip,
                 "translated_ip": session.translated_ip,
                 "translated_port": session.translated_port,
                 "destination_ip": session.destination_ip,
@@ -1338,6 +1498,7 @@ class EvidenceStore:
                 "end_timestamp_ist": session.ended_at.isoformat() if session.ended_at else None,
                 "duration_seconds": session.duration_seconds,
                 "ip_allocation": session.ip_allocation,
+                "user_type": session.user_type,
                 "record_type": session.record_type,
                 "classification": session.classification,
                 "confidence": session.confidence,
@@ -1345,6 +1506,7 @@ class EvidenceStore:
                     "access_identifier": session.access_identifier,
                     "user_id": session.user_id,
                     "contact_number": session.contact_number,
+                    "source_mac": session.source_mac,
                     "imei": session.imei,
                     "imsi": session.imsi,
                     "sim_type": session.sim_type,
@@ -1594,7 +1756,7 @@ class EvidenceStore:
         visible_limit = max(1, min(limit, 5_000))
         scan_cap = max(visible_limit, min(max(scan_limit, 1), 100_000))
         sample_cap = max(1, min(sample_limit, 10))
-        normalized_focus_type = focus_type if focus_type in {"msisdn", "ip", "endpoint", "imei", "imsi", "any"} else "msisdn"
+        normalized_focus_type = focus_type if focus_type in {"msisdn", "ip", "endpoint", "imei", "imsi", "mac", "any"} else "msisdn"
         focus_value = (focus or msisdn or "").strip()
         normalized_hops = max(1, min(hops, 2))
         score_floor = max(0, min(min_score, 1))
@@ -1618,6 +1780,8 @@ class EvidenceStore:
                 return self.list_sessions(imei=value, **common)
             if value_type == "imsi":
                 return self.list_sessions(imsi=value, **common)
+            if value_type == "mac":
+                return self.list_sessions(source_mac=value, **common)
             return self.list_sessions(q=value, **common)
 
         primary_sessions = load_slice(focus_value or None, normalized_focus_type)
@@ -1678,6 +1842,12 @@ class EvidenceStore:
         def cluster_for_node(kind: str, session: SessionRecord) -> str:
             if kind == "source":
                 return "source:a-party"
+            if kind == "mac":
+                cluster_labels["broadband:mac"] = ("Broadband MAC addresses", "mac")
+                return "broadband:mac"
+            if kind == "public_ip":
+                cluster_labels["broadband:public-source"] = ("Public source IPs", "public_ip")
+                return "broadband:public-source"
             cluster_id, label, cluster_kind = application_bucket(session)
             cluster_labels[cluster_id] = (label, cluster_kind)
             return cluster_id
@@ -1717,17 +1887,61 @@ class EvidenceStore:
             existing["first_seen"] = min(existing["first_seen"], session.started_at)
             existing["last_seen"] = max(existing["last_seen"], session.started_at)
             append_sample(existing, session)
-            if existing["kind"] != "source":
+            classification_kinds = {"p2p", "relay", "unknown"}
+            if existing["kind"] in classification_kinds and kind in classification_kinds:
                 existing["kind"] = self._merge_classification(existing["kind"], kind)
             if existing["operator"] != operator:
                 existing["operator"] = "Multiple"
             if kind == "source":
                 add_metadata_sample(existing["metadata"], "imeis", session.imei)
                 add_metadata_sample(existing["metadata"], "imsis", session.imsi)
+                add_metadata_sample(existing["metadata"], "source_macs", session.source_mac)
+                add_metadata_sample(existing["metadata"], "source_public_ips", session.source_public_ip)
+                add_metadata_sample(existing["metadata"], "access_identifiers", session.access_identifier or session.user_id)
+                add_metadata_sample(existing["metadata"], "source_private_ips", session.source_ip)
             else:
                 add_metadata_sample(existing["metadata"], "ports", session.destination_port)
                 add_metadata_sample(existing["metadata"], "apps", session.app_hint)
+                add_metadata_sample(existing["metadata"], "source_macs", session.source_mac)
+                add_metadata_sample(existing["metadata"], "source_public_ips", session.source_public_ip)
                 existing["metadata"]["source_count"] = source_count_by_target.get(node_id, 1)
+
+        def add_flow_link(source_id: str, target_id: str, classification: str, session: SessionRecord) -> None:
+            link_id = f"{source_id}__{target_id}"
+            total_bytes = session.bytes_up + session.bytes_down
+            existing_link = links.get(link_id)
+            if existing_link is None:
+                existing_link = {
+                    "id": link_id,
+                    "source_id": source_id,
+                    "target_id": target_id,
+                    "classification": classification,
+                    "count": 0,
+                    "bytes": 0,
+                    "duration_seconds": 0,
+                    "confidence": session.confidence,
+                    "score": 0,
+                    "first_seen": session.started_at,
+                    "last_seen": session.started_at,
+                    "sessions": [],
+                    "metadata": {"destination_ports": [], "source_ports": [], "applications": [], "night_sessions": 0},
+                }
+                links[link_id] = existing_link
+            existing_link["count"] += 1
+            existing_link["bytes"] += total_bytes
+            existing_link["duration_seconds"] += session.duration_seconds
+            existing_link["confidence"] = max(existing_link["confidence"], session.confidence)
+            existing_link["classification"] = self._merge_classification(existing_link["classification"], classification)
+            existing_link["first_seen"] = min(existing_link["first_seen"], session.started_at)
+            existing_link["last_seen"] = max(existing_link["last_seen"], session.started_at)
+            if session.started_at.hour >= 23 or session.started_at.hour <= 5:
+                existing_link["metadata"]["night_sessions"] += 1
+            add_metadata_sample(existing_link["metadata"], "destination_ports", session.destination_port)
+            add_metadata_sample(existing_link["metadata"], "source_ports", session.source_port)
+            add_metadata_sample(existing_link["metadata"], "source_macs", session.source_mac)
+            add_metadata_sample(existing_link["metadata"], "source_public_ips", session.source_public_ip)
+            add_metadata_sample(existing_link["metadata"], "applications", session.app_hint)
+            append_sample(existing_link, session)
 
         for session in sessions:
             add_node(
@@ -1746,40 +1960,33 @@ class EvidenceStore:
                 session.operator,
                 session,
             )
+            if session.source_mac:
+                mac_node_id = f"mac:{session.source_mac}"
+                add_node(
+                    mac_node_id,
+                    "mac",
+                    session.source_mac[-8:],
+                    session.source_mac,
+                    "Fixed-line CPE",
+                    session,
+                )
+                add_flow_link(session.a_party_msisdn, mac_node_id, "unknown", session)
+                if session.source_public_ip:
+                    public_node_id = f"source-public:{session.source_public_ip}"
+                    add_node(
+                        public_node_id,
+                        "public_ip",
+                        self._short_ip(session.source_public_ip),
+                        session.source_public_ip,
+                        "Public source IP",
+                        session,
+                    )
+                    add_flow_link(mac_node_id, public_node_id, "unknown", session)
+                    add_flow_link(public_node_id, session.destination_ip, session.classification, session)
+                else:
+                    add_flow_link(mac_node_id, session.destination_ip, session.classification, session)
 
-            link_id = f"{session.a_party_msisdn}__{session.destination_ip}"
-            total_bytes = session.bytes_up + session.bytes_down
-            existing_link = links.get(link_id)
-            if existing_link is None:
-                existing_link = {
-                    "id": link_id,
-                    "source_id": session.a_party_msisdn,
-                    "target_id": session.destination_ip,
-                    "classification": session.classification,
-                    "count": 0,
-                    "bytes": 0,
-                    "duration_seconds": 0,
-                    "confidence": session.confidence,
-                    "score": 0,
-                    "first_seen": session.started_at,
-                    "last_seen": session.started_at,
-                    "sessions": [],
-                    "metadata": {"destination_ports": [], "source_ports": [], "applications": [], "night_sessions": 0},
-                }
-                links[link_id] = existing_link
-            existing_link["count"] += 1
-            existing_link["bytes"] += total_bytes
-            existing_link["duration_seconds"] += session.duration_seconds
-            existing_link["confidence"] = max(existing_link["confidence"], session.confidence)
-            existing_link["classification"] = self._merge_classification(existing_link["classification"], session.classification)
-            existing_link["first_seen"] = min(existing_link["first_seen"], session.started_at)
-            existing_link["last_seen"] = max(existing_link["last_seen"], session.started_at)
-            if session.started_at.hour >= 23 or session.started_at.hour <= 5:
-                existing_link["metadata"]["night_sessions"] += 1
-            add_metadata_sample(existing_link["metadata"], "destination_ports", session.destination_port)
-            add_metadata_sample(existing_link["metadata"], "source_ports", session.source_port)
-            add_metadata_sample(existing_link["metadata"], "applications", session.app_hint)
-            append_sample(existing_link, session)
+            add_flow_link(session.a_party_msisdn, session.destination_ip, session.classification, session)
 
         classification_rank = {"p2p": 2, "unknown": 1, "relay": 0}
         class_weight = {"p2p": 0.25, "unknown": 0.14, "relay": 0.04}
@@ -1935,12 +2142,15 @@ class EvidenceStore:
         by_endpoint: dict[str, list[SessionRecord]] = defaultdict(list)
         by_msisdn: dict[str, list[SessionRecord]] = defaultdict(list)
         by_pair: dict[tuple[str, str, int], list[SessionRecord]] = defaultdict(list)
+        by_mac: dict[str, list[SessionRecord]] = defaultdict(list)
 
         for session in sessions:
             endpoint = f"{session.destination_ip}:{session.destination_port}"
             by_endpoint[endpoint].append(session)
             by_msisdn[session.a_party_msisdn].append(session)
             by_pair[(session.a_party_msisdn, session.destination_ip, session.destination_port)].append(session)
+            if session.source_mac:
+                by_mac[session.source_mac].append(session)
 
         for endpoint, items in by_endpoint.items():
             p2p_items = [item for item in items if item.classification == "p2p"]
@@ -1983,6 +2193,21 @@ class EvidenceStore:
             )
 
         for msisdn, items in by_msisdn.items():
+            source_macs = sorted({item.source_mac for item in items if item.source_mac})
+            if len(source_macs) >= 2:
+                patterns.append(
+                    SuspiciousPattern(
+                        id=self._pattern_id("access_identifier_multiple_macs", msisdn),
+                        severity="medium",
+                        pattern_type="access_identifier_multiple_macs",
+                        title="A-party observed across multiple MAC addresses",
+                        description="The same broadband access identifier appears with more than one customer device MAC address.",
+                        entities={"msisdn": msisdn, "source_macs": source_macs},
+                        evidence=[f"{item.source_mac} at {item.started_at.isoformat()}" for item in items if item.source_mac][:5],
+                        recommended_action="Confirm whether the ISP export logs router MAC, ONT MAC, or access equipment MAC before treating this as device movement.",
+                        score=round(min(0.9, 0.55 + len(source_macs) * 0.08), 2),
+                    )
+                )
             if len(items) >= 3:
                 relay_count = sum(1 for item in items if item.classification == "relay")
                 relay_ratio = relay_count / len(items)
@@ -2019,6 +2244,24 @@ class EvidenceStore:
                         )
                     )
                     break
+
+        for source_mac, items in by_mac.items():
+            identifiers = sorted({item.a_party_msisdn for item in items})
+            if len(identifiers) < 2:
+                continue
+            patterns.append(
+                SuspiciousPattern(
+                    id=self._pattern_id("shared_source_mac", source_mac),
+                    severity="high" if len(identifiers) >= 3 else "medium",
+                    pattern_type="shared_source_mac",
+                    title="MAC address shared across A-parties",
+                    description="One fixed-line customer device MAC appears with multiple broadband access identifiers.",
+                    entities={"source_mac": source_mac, "access_identifiers": identifiers},
+                    evidence=[f"{item.a_party_msisdn} via {item.source_public_ip or item.source_ip} at {item.started_at.isoformat()}" for item in items[:5]],
+                    recommended_action="Use MAC Intelligence to compare account IDs, public source IPs, and timestamp overlap before attribution.",
+                    score=round(min(0.95, 0.58 + len(identifiers) * 0.1 + len(items) * 0.01), 2),
+                )
+            )
 
         for upload in uploads:
             if upload.rows_quarantined <= 0:
@@ -2163,6 +2406,68 @@ class EvidenceStore:
         ]
         return sorted(rows, key=lambda item: (-item.sessions, item.imei))[: max(1, min(limit, 100))]
 
+    def mac_frequency(self, case_id: str | None = None, msisdn: str | None = None, source_mac: str | None = None, limit: int = 20) -> list[MacFrequencyReport]:
+        sessions = self.list_sessions(case_id=case_id, msisdn=msisdn, source_mac=source_mac, limit=20_000)
+        grouped: dict[str, dict[str, Any]] = {}
+        for session in sessions:
+            if not session.source_mac:
+                continue
+            key = session.source_mac.upper()
+            item = grouped.setdefault(
+                key,
+                {
+                    "sessions": 0,
+                    "access_identifiers": set(),
+                    "source_public_ips": set(),
+                    "source_private_ips": set(),
+                    "user_types": set(),
+                    "destinations": defaultdict(lambda: {"sessions": 0, "bytes_total": 0, "classification": "unknown", "operator": "Unknown"}),
+                    "times": [],
+                    "total_bytes": 0,
+                },
+            )
+            total_bytes = session.bytes_up + session.bytes_down
+            endpoint = f"{session.destination_ip}:{session.destination_port}"
+            destination = item["destinations"][endpoint]
+            destination["sessions"] += 1
+            destination["bytes_total"] += total_bytes
+            destination["classification"] = self._merge_classification(destination["classification"], session.classification)
+            destination["operator"] = session.operator if destination["operator"] in {"Unknown", session.operator} else "Multiple"
+            item["sessions"] += 1
+            item["access_identifiers"].add(session.a_party_msisdn)
+            if session.source_public_ip:
+                item["source_public_ips"].add(session.source_public_ip)
+            if session.source_ip:
+                item["source_private_ips"].add(session.source_ip)
+            if session.user_type or session.ip_allocation:
+                item["user_types"].add(session.user_type or session.ip_allocation)
+            item["times"].append(session.started_at)
+            item["total_bytes"] += total_bytes
+
+        rows: list[MacFrequencyReport] = []
+        for source_mac, item in grouped.items():
+            destinations = [
+                {"endpoint": endpoint, **payload}
+                for endpoint, payload in item["destinations"].items()
+            ]
+            rows.append(
+                MacFrequencyReport(
+                    source_mac=source_mac,
+                    sessions=item["sessions"],
+                    access_identifiers=sorted(item["access_identifiers"]),
+                    source_public_ips=sorted(item["source_public_ips"]),
+                    source_private_ips=sorted(item["source_private_ips"]),
+                    user_types=sorted(item["user_types"]),
+                    top_destinations=sorted(destinations, key=lambda entry: (-entry["sessions"], -entry["bytes_total"], entry["endpoint"]))[:5],
+                    total_bytes=item["total_bytes"],
+                    first_seen=min(item["times"]) if item["times"] else None,
+                    last_seen=max(item["times"]) if item["times"] else None,
+                    shared_access_identifiers=len(item["access_identifiers"]),
+                    public_ip_count=len(item["source_public_ips"]),
+                )
+            )
+        return sorted(rows, key=lambda item: (-item.shared_access_identifiers, -item.sessions, item.source_mac))[: max(1, min(limit, 100))]
+
     def location_summary(self, case_id: str | None = None, msisdn: str | None = None, limit: int = 20) -> list[LocationSummaryReport]:
         sessions = self.list_sessions(case_id=case_id, msisdn=msisdn, limit=10_000)
         grouped: dict[str, dict[str, Any]] = {}
@@ -2278,8 +2583,11 @@ class EvidenceStore:
         fields = [
             "case_id",
             "a_party_msisdn",
+            "access_identifier",
+            "user_id",
             "source_ip",
             "source_port",
+            "source_public_ip",
             "translated_ip",
             "translated_port",
             "destination_ip",
@@ -2291,12 +2599,16 @@ class EvidenceStore:
             "country",
             "latitude",
             "longitude",
+            "ip_allocation",
+            "user_type",
             "protocol",
+            "event_started_at",
             "started_at",
             "ended_at",
             "duration_seconds",
             "bytes_up",
             "bytes_down",
+            "source_mac",
             "imei",
             "imsi",
             "classification",
@@ -2621,7 +2933,11 @@ class EvidenceStore:
                 needle in session.a_party_msisdn.lower()
                 or needle in session.destination_ip.lower()
                 or needle in (session.source_ip or "").lower()
+                or needle in (session.source_public_ip or "").lower()
                 or needle in (session.translated_ip or "").lower()
+                or needle in (session.access_identifier or "").lower()
+                or needle in (session.user_id or "").lower()
+                or needle in (session.source_mac or "").lower()
                 or needle in session.operator.lower()
             ):
                 results.append(

@@ -5,6 +5,7 @@ import { GeoMap } from "./components/GeoMap.jsx";
 import { PoIPage } from "./components/PoIPage.jsx";
 import { IpPage } from "./components/IpPage.jsx";
 import { ImeiPage } from "./components/ImeiPage.jsx";
+import { MacPage } from "./components/MacPage.jsx";
 import { AnimatePresence, motion } from "framer-motion";
 import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY } from "d3-force";
 import {
@@ -14,6 +15,7 @@ import {
   BriefcaseBusiness,
   Check,
   CheckCircle2,
+  Clock,
   Code,
   Calendar,
   ChevronDown,
@@ -74,6 +76,7 @@ const navItems = [
   { icon: BarChart3, label: "Analytics", path: "/analytics" },
   { icon: FileSpreadsheet, label: "Reports", path: "/reports" },
   { icon: Smartphone, label: "IMEI Analysis", path: "/imei" },
+  { icon: Server, label: "MAC Intelligence", path: "/mac" },
   { icon: FileText, label: "Request Packages", path: "/packages" },
   { icon: Clipboard, label: "Audit Log", path: "/audit" },
   { icon: Settings, label: "Settings", path: "/settings" }
@@ -87,6 +90,9 @@ const emptyStats = {
   unknown: 0,
   quarantined_rows: 0,
   avg_confidence: 0,
+  unique_macs: 0,
+  shared_macs: 0,
+  unique_source_public_ips: 0,
   latest_upload: null,
   top_crime_types: []
 };
@@ -124,6 +130,7 @@ const initialState = {
   timeline: [],
   applications: [],
   imeiRows: [],
+  macRows: [],
   locationRows: [],
   persistence: null
 };
@@ -146,7 +153,7 @@ function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const [stats, cases, importSpecs, uploads, jobs, sessions, patterns, timeline, applications, extractions, packagesList, auditLogs, platformRanges, persistence, imeiRows, locationRows] = await Promise.all([
+      const [stats, cases, importSpecs, uploads, jobs, sessions, patterns, timeline, applications, extractions, packagesList, auditLogs, platformRanges, persistence, imeiRows, macRows, locationRows] = await Promise.all([
         api.dashboard(),
         api.cases(),
         api.importSpecs(),
@@ -162,9 +169,10 @@ function App() {
         api.platformRanges(),
         api.persistenceStatus(),
         api.imeiFrequency("?limit=6"),
+        api.macFrequency("?limit=6"),
         api.locationSummary("?limit=6")
       ]);
-      setData((current) => ({ ...current, stats, cases, importSpecs, uploads, jobs, sessions, patterns, timeline, applications, extractions, packages: packagesList, auditLogs, platformRanges, persistence, imeiRows, locationRows }));
+      setData((current) => ({ ...current, stats, cases, importSpecs, uploads, jobs, sessions, patterns, timeline, applications, extractions, packages: packagesList, auditLogs, platformRanges, persistence, imeiRows, macRows, locationRows }));
       setApiLive(true);
       setApiError("");
     } catch (error) {
@@ -385,6 +393,7 @@ function App() {
             <Route path="/poi/:msisdn" element={<PoIPage sessionCount={data.stats.sessions} />} />
             <Route path="/ip/:ip" element={<IpPage sessionCount={data.stats.sessions} />} />
             <Route path="/imei" element={<ImeiPage sessionCount={data.stats.sessions} />} />
+            <Route path="/mac" element={<MacPage sessionCount={data.stats.sessions} />} />
             <Route path="/reports" element={<ReportsPage sessions={data.sessions} sessionCount={data.stats.sessions} />} />
             <Route path="/packages" element={<PackagesPage packagesList={data.packages} />} />
             <Route path="/audit" element={<AuditPage auditLogs={data.auditLogs} />} />
@@ -528,6 +537,7 @@ function DashboardPage({ data }) {
   const topPatterns = (data.patterns ?? []).slice(0, 4);
 
   const imeiRows = (data.imeiRows ?? []).slice(0, 6);
+  const macRows = (data.macRows ?? []).slice(0, 6);
   const locationRows = (data.locationRows ?? []).slice(0, 6);
   const applications = (data.applications ?? []).slice(0, 6);
 
@@ -554,12 +564,13 @@ function DashboardPage({ data }) {
         <StatCard icon={Database} label="Sessions" value={number(data.stats?.sessions)} tone="neutral" />
         <StatCard icon={Target} label="P2P leads" value={number(data.stats?.actionable)} tone="success" />
         <StatCard icon={Server} label="Relay/noise" value={number(data.stats?.relay)} tone="danger" />
+        <StatCard icon={Network} label="MACs" value={number(data.stats?.unique_macs)} tone="neutral" />
         <StatCard icon={Gauge} label="Quarantine" value={number(data.stats?.quarantined_rows)} tone="warning" />
       </div>
 
-      {/* Row 1: IMEI Handset Frequency & Location Hotspots */}
+      {/* Row 1: IMEI, MAC and location pivots */}
       <motion.section 
-        className="panel span-6"
+        className="panel span-4"
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.08, duration: 0.22 }}
@@ -581,7 +592,29 @@ function DashboardPage({ data }) {
       </motion.section>
 
       <motion.section 
-        className="panel span-6"
+        className="panel span-4"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1, duration: 0.22 }}
+      >
+        <PanelHeader icon={Server} title="Broadband MAC Reuse" action={<Badge tone="brand">{macRows.length}</Badge>} />
+        <div className="report-list scrollable-list">
+          {macRows.length ? macRows.map((item) => (
+            <article className="report-row" key={item.source_mac}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                <strong className="mono" style={{ fontSize: '13px' }}>{item.source_mac}</strong>
+                <Badge tone={(item.shared_access_identifiers ?? 0) > 1 ? "danger" : "neutral"}>{item.shared_access_identifiers || 1} IDs</Badge>
+              </div>
+              <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '2px', display: 'block' }}>
+                {item.sessions} sessions | {item.public_ip_count || 0} public source IPs
+              </span>
+            </article>
+          )) : <EmptyState label="No MAC address records found" />}
+        </div>
+      </motion.section>
+
+      <motion.section 
+        className="panel span-4"
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.12, duration: 0.22 }}
@@ -1230,6 +1263,10 @@ function SessionsPage({ sessions = [] }) {
   const [domain, setDomain] = useState("");
   const [cellId, setCellId] = useState("");
   const [imei, setImei] = useState("");
+  const [sourceMac, setSourceMac] = useState("");
+  const [sourcePublicIp, setSourcePublicIp] = useState("");
+  const [accessId, setAccessId] = useState("");
+  const [userType, setUserType] = useState("");
   
   // Date time filtration state
   const [timeMode, setTimeMode] = useState("serial"); // "serial" or "parallel"
@@ -1248,7 +1285,11 @@ function SessionsPage({ sessions = [] }) {
         session.a_party_msisdn.includes(needle) ||
         session.destination_ip.includes(needle) ||
         (session.source_ip ?? "").includes(needle) ||
+        (session.source_public_ip ?? "").toLowerCase().includes(needle) ||
         (session.translated_ip ?? "").includes(needle) ||
+        (session.source_mac ?? "").toLowerCase().includes(needle) ||
+        (session.access_identifier ?? "").toLowerCase().includes(needle) ||
+        (session.user_id ?? "").toLowerCase().includes(needle) ||
         session.operator.toLowerCase().includes(needle);
 
       // 3. Target IP
@@ -1266,7 +1307,13 @@ function SessionsPage({ sessions = [] }) {
       // 7. IMEI
       const matchesImei = !imei.trim() || (session.imei || "").toLowerCase().includes(imei.trim().toLowerCase());
 
-      // 8. Date-Time filtration
+      // 8. Broadband / fixed-line fields
+      const matchesSourceMac = !sourceMac.trim() || (session.source_mac || "").toLowerCase().includes(sourceMac.trim().toLowerCase());
+      const matchesSourcePublicIp = !sourcePublicIp.trim() || (session.source_public_ip || "").toLowerCase().includes(sourcePublicIp.trim().toLowerCase());
+      const matchesAccessId = !accessId.trim() || (session.access_identifier || session.user_id || session.a_party_msisdn || "").toLowerCase().includes(accessId.trim().toLowerCase());
+      const matchesUserType = !userType.trim() || (session.user_type || session.ip_allocation || "").toLowerCase().includes(userType.trim().toLowerCase());
+
+      // 9. Date-Time filtration
       let matchesTime = true;
       const sessionTime = session.started_at ? new Date(session.started_at).getTime() : null;
 
@@ -1303,9 +1350,9 @@ function SessionsPage({ sessions = [] }) {
         matchesTime = false;
       }
 
-      return matchesClass && matchesQuery && matchesTargetIp && matchesApp && matchesDomain && matchesCellId && matchesImei && matchesTime;
+      return matchesClass && matchesQuery && matchesTargetIp && matchesApp && matchesDomain && matchesCellId && matchesImei && matchesSourceMac && matchesSourcePublicIp && matchesAccessId && matchesUserType && matchesTime;
     });
-  }, [classification, deferredQuery, sessions, targetIp, app, domain, cellId, imei, timeMode, serialRange, parallelRanges]);
+  }, [classification, deferredQuery, sessions, targetIp, app, domain, cellId, imei, sourceMac, sourcePublicIp, accessId, userType, timeMode, serialRange, parallelRanges]);
 
   return (
     <motion.section {...pageMotion} className="page-grid">
@@ -1315,7 +1362,7 @@ function SessionsPage({ sessions = [] }) {
         <div className="toolbar">
           <label className="input-shell">
             <Search size={16} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="MSISDN, IP, operator" />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="MSISDN, IP, MAC, operator" />
           </label>
           
           <SelectControl
@@ -1364,6 +1411,22 @@ function SessionsPage({ sessions = [] }) {
                 <span>IMEI</span>
                 <input value={imei} onChange={(e) => setImei(e.target.value)} placeholder="e.g. 3567890123" />
               </label>
+              <label className="field">
+                <span>MAC Address</span>
+                <input value={sourceMac} onChange={(e) => setSourceMac(e.target.value)} placeholder="e.g. AA:BB:CC" />
+              </label>
+              <label className="field">
+                <span>Source Public IP</span>
+                <input value={sourcePublicIp} onChange={(e) => setSourcePublicIp(e.target.value)} placeholder="e.g. 103.10.20.30" />
+              </label>
+              <label className="field">
+                <span>Access ID</span>
+                <input value={accessId} onChange={(e) => setAccessId(e.target.value)} placeholder="DSL / PPPoE user ID" />
+              </label>
+              <label className="field">
+                <span>User Type</span>
+                <input value={userType} onChange={(e) => setUserType(e.target.value)} placeholder="Dynamic / Static" />
+              </label>
             </div>
 
             <div style={{ borderTop: "1px solid var(--color-border)", paddingTop: "12px" }}>
@@ -1385,11 +1448,21 @@ function SessionsPage({ sessions = [] }) {
                 <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
                   <label className="field" style={{ flex: 1, minWidth: "180px" }}>
                     <span>From Timestamp</span>
-                    <input type="datetime-local" value={serialRange.from} onChange={(e) => setSerialRange({ ...serialRange, from: e.target.value })} />
+                    <PremiumDateTimePicker
+                      value={serialRange.from}
+                      onChange={(value) => setSerialRange((range) => ({ ...range, from: value }))}
+                      placeholder="Start date"
+                      defaultTime="00:00"
+                    />
                   </label>
                   <label className="field" style={{ flex: 1, minWidth: "180px" }}>
                     <span>To Timestamp</span>
-                    <input type="datetime-local" value={serialRange.to} onChange={(e) => setSerialRange({ ...serialRange, to: e.target.value })} />
+                    <PremiumDateTimePicker
+                      value={serialRange.to}
+                      onChange={(value) => setSerialRange((range) => ({ ...range, to: value }))}
+                      placeholder="End date"
+                      defaultTime="23:59"
+                    />
                   </label>
                   <Button type="button" variant="secondary" onClick={() => setSerialRange({ from: "", to: "" })} style={{ marginTop: "18px" }}>Clear</Button>
                 </div>
@@ -1399,19 +1472,25 @@ function SessionsPage({ sessions = [] }) {
                     <div key={range.id} style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
                       <label className="field" style={{ flex: 1, minWidth: "180px" }}>
                         <span>Window #{index + 1} - From</span>
-                        <input type="datetime-local" value={range.from} onChange={(e) => {
-                          const updated = [...parallelRanges];
-                          updated[index].from = e.target.value;
-                          setParallelRanges(updated);
-                        }} />
+                        <PremiumDateTimePicker
+                          value={range.from}
+                          onChange={(value) => setParallelRanges((ranges) => ranges.map((item, itemIndex) => (
+                            itemIndex === index ? { ...item, from: value } : item
+                          )))}
+                          placeholder="Start date"
+                          defaultTime="00:00"
+                        />
                       </label>
                       <label className="field" style={{ flex: 1, minWidth: "180px" }}>
                         <span>Window #{index + 1} - To</span>
-                        <input type="datetime-local" value={range.to} onChange={(e) => {
-                          const updated = [...parallelRanges];
-                          updated[index].to = e.target.value;
-                          setParallelRanges(updated);
-                        }} />
+                        <PremiumDateTimePicker
+                          value={range.to}
+                          onChange={(value) => setParallelRanges((ranges) => ranges.map((item, itemIndex) => (
+                            itemIndex === index ? { ...item, to: value } : item
+                          )))}
+                          placeholder="End date"
+                          defaultTime="23:59"
+                        />
                       </label>
                       {parallelRanges.length > 1 && (
                         <button
@@ -1456,6 +1535,10 @@ function SessionsPage({ sessions = [] }) {
                   setDomain("");
                   setCellId("");
                   setImei("");
+                  setSourceMac("");
+                  setSourcePublicIp("");
+                  setAccessId("");
+                  setUserType("");
                   setSerialRange({ from: "", to: "" });
                   setParallelRanges([{ from: "", to: "", id: 1 }]);
                   setQuery("");
@@ -1535,7 +1618,141 @@ function ExtractionsPage({ extractions = [], runExtraction }) {
   );
 }
 
-function PremiumDatePicker({ value, onChange, placeholder = "Select date" }) {
+function splitDateTimeValue(value) {
+  if (!value) return { date: "", time: "" };
+  const [date = "", rawTime = ""] = String(value).split("T");
+  return { date, time: rawTime.slice(0, 5) };
+}
+
+function composeDateTimeValue(date, time, defaultTime = "00:00") {
+  return date ? `${date}T${time || defaultTime}` : "";
+}
+
+const TIME_PICKER_HOURS = Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, "0"));
+const TIME_PICKER_MINUTES = Array.from({ length: 60 }, (_, minute) => String(minute).padStart(2, "0"));
+
+function normalizeTimeValue(value, defaultTime = "00:00") {
+  const candidate = value || defaultTime;
+  const match = /^(\d{1,2}):(\d{1,2})/.exec(candidate);
+  if (!match) return defaultTime;
+  const hour = Math.min(23, Math.max(0, Number(match[1])));
+  const minute = Math.min(59, Math.max(0, Number(match[2])));
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function PremiumDateTimePicker({ value, onChange, placeholder = "Select date", defaultTime = "00:00" }) {
+  const { date, time } = splitDateTimeValue(value);
+
+  return (
+    <div className="premium-datetime">
+      <PremiumDatePicker
+        value={date}
+        onChange={(nextDate) => onChange(composeDateTimeValue(nextDate, time, defaultTime))}
+        placeholder={placeholder}
+        className="is-fluid"
+      />
+      <PremiumTimePicker
+        value={date ? (time || defaultTime) : ""}
+        onChange={(nextTime) => onChange(composeDateTimeValue(date, nextTime, defaultTime))}
+        disabled={!date}
+        defaultTime={defaultTime}
+      />
+    </div>
+  );
+}
+
+function PremiumTimePicker({ value, onChange, disabled = false, defaultTime = "00:00" }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef(null);
+  const selectedHourRef = useRef(null);
+  const selectedMinuteRef = useRef(null);
+  const selectedTime = normalizeTimeValue(value, defaultTime);
+  const [selectedHour, selectedMinute] = selectedTime.split(":");
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (containerRef.current && !containerRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    selectedHourRef.current?.scrollIntoView({ block: "center" });
+    selectedMinuteRef.current?.scrollIntoView({ block: "center" });
+  }, [isOpen, selectedHour, selectedMinute]);
+
+  const handleHourSelect = (hour) => {
+    onChange(`${hour}:${selectedMinute}`);
+  };
+
+  const handleMinuteSelect = (minute) => {
+    onChange(`${selectedHour}:${minute}`);
+    setIsOpen(false);
+  };
+
+  return (
+    <div className={`premium-timepicker ${disabled ? "is-disabled" : ""}`} ref={containerRef}>
+      <button
+        type="button"
+        className="premium-timepicker__trigger"
+        disabled={disabled}
+        onClick={() => setIsOpen((open) => !open)}
+        aria-label="Select time"
+        aria-expanded={isOpen}
+      >
+        <Clock size={15} />
+        <span>{value ? selectedTime : "Time"}</span>
+      </button>
+
+      {isOpen && !disabled && (
+        <div className="premium-timepicker__dropdown">
+          <div className="premium-timepicker__columns">
+            <div>
+              <span className="premium-timepicker__label">Hour</span>
+              <div className="premium-timepicker__column" role="listbox" aria-label="Hour">
+                {TIME_PICKER_HOURS.map((hour) => (
+                  <button
+                    key={hour}
+                    ref={selectedHour === hour ? selectedHourRef : null}
+                    type="button"
+                    className={`premium-timepicker__option ${selectedHour === hour ? "selected" : ""}`}
+                    onClick={() => handleHourSelect(hour)}
+                    aria-selected={selectedHour === hour}
+                  >
+                    {hour}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <span className="premium-timepicker__label">Minute</span>
+              <div className="premium-timepicker__column" role="listbox" aria-label="Minute">
+                {TIME_PICKER_MINUTES.map((minute) => (
+                  <button
+                    key={minute}
+                    ref={selectedMinute === minute ? selectedMinuteRef : null}
+                    type="button"
+                    className={`premium-timepicker__option ${selectedMinute === minute ? "selected" : ""}`}
+                    onClick={() => handleMinuteSelect(minute)}
+                    aria-selected={selectedMinute === minute}
+                  >
+                    {minute}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PremiumDatePicker({ value, onChange, placeholder = "Select date", className = "" }) {
   const [isOpen, setIsOpen] = useState(false);
   const [currentMonth, setCurrentMonth] = useState(() => {
     const d = value ? new Date(value) : new Date();
@@ -1621,7 +1838,7 @@ function PremiumDatePicker({ value, onChange, placeholder = "Select date" }) {
   };
 
   return (
-    <div className="premium-datepicker" ref={containerRef}>
+    <div className={`premium-datepicker ${className}`.trim()} ref={containerRef}>
       <button
         type="button"
         className="premium-datepicker__trigger"
@@ -1714,7 +1931,9 @@ function MapPage({ runExtraction, sessionCount = 0 }) {
       setFocusType("any");
       return;
     }
-    if (clean.includes(".") || clean.includes(":")) {
+    if (/^(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(clean)) {
+      setFocusType("mac");
+    } else if (clean.includes(".") || clean.includes(":")) {
       setFocusType("ip");
     } else if (/^\d{15}$/.test(clean)) {
       setFocusType("imei");
@@ -1736,6 +1955,7 @@ function MapPage({ runExtraction, sessionCount = 0 }) {
     { value: "ip",       label: "Dest IP" },
     { value: "imei",     label: "IMEI" },
     { value: "imsi",     label: "IMSI" },
+    { value: "mac",      label: "MAC" },
     { value: "any",      label: "Any field" },
   ];
   const rankByOptions = [
@@ -1779,7 +1999,7 @@ function MapPage({ runExtraction, sessionCount = 0 }) {
     const srcs = graphData.nodes?.filter(n => n.kind === "source") ?? [];
     return [...srcs].sort((a,b) => (b.score??0)-(a.score??0) || (b.count??0)-(a.count??0))[0]?.id ?? "";
   }, [graphData.nodes]);
-  const extractionMsisdn = focus.trim() || selectedSourceMsisdn || topSourceMsisdn;
+  const extractionMsisdn = (focusType === "msisdn" ? focus.trim() : "") || selectedSourceMsisdn || topSourceMsisdn;
 
   const handleRunExtraction = useCallback((target) => {
     const v = String(target ?? extractionMsisdn).trim();
@@ -1837,7 +2057,7 @@ function MapPage({ runExtraction, sessionCount = 0 }) {
               <Badge tone={graphBusy ? "warning" : sessionCount ? "brand" : "neutral"}>{graphStatus}</Badge>
 
               {/* 1. Target & Timeframe Scope */}
-              <label className="map-query" title="Search focus phone number, IP or IMEI">
+              <label className="map-query" title="Search focus phone number, IP, IMEI or MAC">
                 <Search size={16} />
                 <input
                   aria-label="Focus entity"
@@ -2388,9 +2608,11 @@ function SessionsTable({ sessions, compact = false }) {
       <table>
         <thead>
           <tr>
-            <th>MSISDN</th>
+            <th>A-party</th>
             {!compact ? <th>Source</th> : null}
             {!compact ? <th>NAT</th> : null}
+            {!compact ? <th>Public Source</th> : null}
+            {!compact ? <th>MAC</th> : null}
             <th>Destination</th>
             <th>Operator</th>
             <th>Class</th>
@@ -2404,13 +2626,15 @@ function SessionsTable({ sessions, compact = false }) {
               <td><NavLink to={`/poi/${session.a_party_msisdn}`} className="text-link mono">{session.a_party_msisdn}</NavLink></td>
               {!compact ? <td className="mono">{formatEndpoint(session.source_ip, session.source_port)}</td> : null}
               {!compact ? <td className="mono">{formatEndpoint(session.translated_ip, session.translated_port)}</td> : null}
+              {!compact ? <td className="mono">{session.source_public_ip || "-"}</td> : null}
+              {!compact ? <td className="mono">{session.source_mac ? <NavLink to={`/mac?mac=${encodeURIComponent(session.source_mac)}`} className="text-link mono">{session.source_mac}</NavLink> : "-"}</td> : null}
               <td><NavLink to={`/ip/${session.destination_ip}`} className="text-link mono">{formatEndpoint(session.destination_ip, session.destination_port)}</NavLink></td>
               <td>{session.operator}</td>
               <td><Badge tone={toneForClass(session.classification)}>{session.classification}</Badge></td>
               {!compact ? <td className="mono">{date(session.started_at)}</td> : null}
               <td>{Math.round(session.confidence * 100)}%</td>
             </tr>
-          )) : <TableEmptyRow colSpan={compact ? 5 : 8} label="No normalized sessions found" />}
+          )) : <TableEmptyRow colSpan={compact ? 5 : 10} label="No normalized sessions found" />}
         </tbody>
       </table>
     </div>
@@ -4105,6 +4329,9 @@ function GraphNodeInspector({ node, onExtract, onFocusSource }) {
   const isSource     = node.kind === "source";
   const imeis        = node.metadata?.imeis?.filter(Boolean) ?? [];
   const imsis        = node.metadata?.imsis?.filter(Boolean) ?? [];
+  const sourceMacs   = node.metadata?.source_macs?.filter(Boolean) ?? [];
+  const sourcePublicIps = node.metadata?.source_public_ips?.filter(Boolean) ?? [];
+  const accessIds    = node.metadata?.access_identifiers?.filter(Boolean) ?? [];
   const ports        = node.metadata?.destination_ports ?? node.metadata?.ports ?? [];
   const apps         = node.metadata?.apps?.filter(Boolean) ?? [];
   const sharedCount  = node.metadata?.source_count ?? null;
@@ -4125,6 +4352,9 @@ function GraphNodeInspector({ node, onExtract, onFocusSource }) {
         <div><dt>Last seen</dt><dd>{node.last_seen ? date(node.last_seen) : (latest ? date(latest.started_at) : "-")}</dd></div>
         {imeis.length > 0 && <div><dt>IMEI(s)</dt><dd className="mono" style={{fontSize:11}}>{imeis.join(", ")}</dd></div>}
         {imsis.length > 0 && <div><dt>IMSI(s)</dt><dd className="mono" style={{fontSize:11}}>{imsis.join(", ")}</dd></div>}
+        {sourceMacs.length > 0 && <div><dt>MAC(s)</dt><dd className="mono" style={{fontSize:11}}>{sourceMacs.slice(0,4).join(", ")}</dd></div>}
+        {sourcePublicIps.length > 0 && <div><dt>Public source IPs</dt><dd className="mono" style={{fontSize:11}}>{sourcePublicIps.slice(0,4).join(", ")}</dd></div>}
+        {accessIds.length > 0 && <div><dt>Access IDs</dt><dd className="mono" style={{fontSize:11}}>{accessIds.slice(0,4).join(", ")}</dd></div>}
         {ports.length > 0 && <div><dt>Ports</dt><dd className="mono" style={{fontSize:11}}>{ports.slice(0,8).join(", ")}</dd></div>}
         {apps.length  > 0 && <div><dt>Apps</dt><dd style={{fontSize:11}}>{apps.slice(0,4).join(", ")}</dd></div>}
       </dl>
@@ -4141,10 +4371,13 @@ function GraphNodeInspector({ node, onExtract, onFocusSource }) {
 
 function GraphEdgeInspector({ link, onExtract, onFocusSource }) {
   const first       = link.sessions?.[0];
+  const primarySource = first?.a_party_msisdn ?? link.source_id ?? link.sourceId;
   const nightCount  = link.metadata?.night_sessions ?? 0;
   const sharedSrcs  = link.metadata?.shared_source_count ?? 1;
   const destPorts   = link.metadata?.destination_ports ?? [];
   const linkApps    = link.metadata?.applications?.filter(Boolean) ?? [];
+  const sourceMacs  = link.metadata?.source_macs?.filter(Boolean) ?? [];
+  const sourcePublicIps = link.metadata?.source_public_ips?.filter(Boolean) ?? [];
   return (
     <div className="graph-inspector__content">
       <span className="eyebrow">Connection — why this edge exists</span>
@@ -4164,10 +4397,12 @@ function GraphEdgeInspector({ link, onExtract, onFocusSource }) {
         <div><dt>Last seen</dt><dd>{link.last_seen ? date(link.last_seen) : "-"}</dd></div>
         {destPorts.length > 0 && <div><dt>Dest ports</dt><dd className="mono" style={{fontSize:11}}>{destPorts.slice(0,8).join(", ")}</dd></div>}
         {linkApps.length  > 0 && <div><dt>Apps</dt><dd style={{fontSize:11}}>{linkApps.slice(0,4).join(", ")}</dd></div>}
+        {sourceMacs.length > 0 && <div><dt>MAC(s)</dt><dd className="mono" style={{fontSize:11}}>{sourceMacs.slice(0,4).join(", ")}</dd></div>}
+        {sourcePublicIps.length > 0 && <div><dt>Public source IPs</dt><dd className="mono" style={{fontSize:11}}>{sourcePublicIps.slice(0,4).join(", ")}</dd></div>}
       </dl>
       <div className="graph-inspector-actions">
-        <Button type="button" icon={LocateFixed} variant="secondary" onClick={() => onFocusSource(link.source_id ?? link.sourceId)}>Focus A-party</Button>
-        <Button type="button" icon={Target} onClick={() => onExtract(link.source_id ?? link.sourceId)}>Extract source</Button>
+        <Button type="button" icon={LocateFixed} variant="secondary" onClick={() => onFocusSource(primarySource)}>Focus A-party</Button>
+        <Button type="button" icon={Target} onClick={() => onExtract(primarySource)}>Extract source</Button>
       </div>
       {/* Evidence rows */}
       <div className="graph-evidence-list">
@@ -4175,7 +4410,8 @@ function GraphEdgeInspector({ link, onExtract, onFocusSource }) {
           <div key={session.id}>
             <strong>{session.operator}</strong>
             <span className="mono">→ {formatEndpoint(session.destination_ip, session.destination_port)}</span>
-            <small>{formatEndpoint(session.source_ip, session.source_port)}{session.translated_ip ? ` via ${formatEndpoint(session.translated_ip, session.translated_port)}` : ""}</small>
+            <small>{formatEndpoint(session.source_ip, session.source_port)}{session.source_public_ip ? ` public ${session.source_public_ip}` : ""}{session.translated_ip ? ` via ${formatEndpoint(session.translated_ip, session.translated_port)}` : ""}</small>
+            {session.source_mac ? <small className="mono">MAC {session.source_mac}</small> : null}
             <small>{session.source_file} row {session.row_number}</small>
           </div>
         ))}
@@ -4390,10 +4626,10 @@ function ImportSpecsPanel({ importSpecs, createImportSpec }) {
 function AdaptersPanel() {
   return (
     <div className="adapter-grid">
-      {["DoT IPDR", "NAT SYSLOG", "Airtel", "Jio", "Vodafone Idea", "BSNL", "Generic"].map((name) => (
+      {["DoT IPDR", "NAT SYSLOG", "Fixed Line DSL", "Airtel", "Jio", "Vodafone Idea", "BSNL", "Generic"].map((name) => (
         <div className="adapter-tile" key={name}>
           <strong>{name}</strong>
-          <span>msisdn, source_ip:port, translated_ip:port, destination_ip:port</span>
+          <span>{name === "Fixed Line DSL" ? "dsl_user_id, source_public_ip, source_private_ip:port, destination_ip:port, mac_address" : "msisdn, source_ip:port, translated_ip:port, destination_ip:port"}</span>
           <Badge tone="success">loaded</Badge>
         </div>
       ))}

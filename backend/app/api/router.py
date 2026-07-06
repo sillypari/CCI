@@ -19,6 +19,7 @@ from app.schemas.core import (
     ImeiFrequencyReport,
     IpSummaryReport,
     LocationSummaryReport,
+    MacFrequencyReport,
     PersistenceStatus,
     PlatformRange,
     PoiSummaryReport,
@@ -177,6 +178,10 @@ def list_sessions(
     case_id: str | None = None,
     destination_ip: str | None = None,
     imei: str | None = None,
+    source_mac: str | None = None,
+    source_public_ip: str | None = None,
+    access_identifier: str | None = None,
+    user_type: str | None = None,
     app: str | None = None,
     domain: str | None = None,
     cell_id: str | None = None,
@@ -185,7 +190,7 @@ def list_sessions(
     limit: int = Query(default=100, ge=1, le=10_000),
     offset: int = Query(default=0, ge=0),
 ) -> list[SessionRecord]:
-    return store.list_sessions(q=q, msisdn=msisdn, classification=classification, case_id=case_id, destination_ip=destination_ip, imei=imei, app=app, domain=domain, cell_id=cell_id, started_from=started_from, started_to=started_to, limit=limit, offset=offset)
+    return store.list_sessions(q=q, msisdn=msisdn, classification=classification, case_id=case_id, destination_ip=destination_ip, imei=imei, source_mac=source_mac, source_public_ip=source_public_ip, access_identifier=access_identifier, user_type=user_type, app=app, domain=domain, cell_id=cell_id, started_from=started_from, started_to=started_to, limit=limit, offset=offset)
 
 
 @api_router.get("/sessions/{session_id}", response_model=SessionRecord, tags=["sessions"])
@@ -225,7 +230,7 @@ def get_extraction(extraction_id: str) -> ExtractionResult:
 def communication_graph(
     msisdn: str | None = None,
     focus: str | None = None,
-    focus_type: str = Query(default="msisdn", pattern="^(msisdn|ip|endpoint|imei|imsi|any)$"),
+    focus_type: str = Query(default="msisdn", pattern="^(msisdn|ip|endpoint|imei|imsi|mac|any)$"),
     case_id: str | None = None,
     classification: str | None = Query(default=None, pattern="^(p2p|relay|unknown)$"),
     limit: int = Query(default=100, ge=1, le=5_000),
@@ -249,7 +254,7 @@ def communication_graph(
 def export_graph_json(
     msisdn: str | None = None,
     focus: str | None = None,
-    focus_type: str = Query(default="msisdn", pattern="^(msisdn|ip|endpoint|imei|imsi|any)$"),
+    focus_type: str = Query(default="msisdn", pattern="^(msisdn|ip|endpoint|imei|imsi|mac|any)$"),
     case_id: str | None = None,
     classification: str | None = Query(default=None, pattern="^(p2p|relay|unknown)$"),
     limit: int = Query(default=5_000, ge=1, le=20_000),
@@ -271,7 +276,7 @@ def export_graph_json(
 def export_graph_graphml(
     msisdn: str | None = None,
     focus: str | None = None,
-    focus_type: str = Query(default="msisdn", pattern="^(msisdn|ip|endpoint|imei|imsi|any)$"),
+    focus_type: str = Query(default="msisdn", pattern="^(msisdn|ip|endpoint|imei|imsi|mac|any)$"),
     case_id: str | None = None,
     classification: str | None = Query(default=None, pattern="^(p2p|relay|unknown)$"),
     limit: int = Query(default=5_000, ge=1, le=20_000),
@@ -387,6 +392,11 @@ def common_whatsapp(case_id: str | None = None, msisdns: str | None = None, limi
 @api_router.get("/reports/imei-frequency", response_model=list[ImeiFrequencyReport], tags=["reports"])
 def imei_frequency(case_id: str | None = None, msisdn: str | None = None, limit: int = Query(default=20, ge=1, le=100)) -> list[ImeiFrequencyReport]:
     return store.imei_frequency(case_id=case_id, msisdn=msisdn, limit=limit)
+
+
+@api_router.get("/reports/mac-frequency", response_model=list[MacFrequencyReport], tags=["reports"])
+def mac_frequency(case_id: str | None = None, msisdn: str | None = None, source_mac: str | None = None, limit: int = Query(default=20, ge=1, le=100)) -> list[MacFrequencyReport]:
+    return store.mac_frequency(case_id=case_id, msisdn=msisdn, source_mac=source_mac, limit=limit)
 
 
 @api_router.get("/reports/location-summary", response_model=list[LocationSummaryReport], tags=["reports"])

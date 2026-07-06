@@ -4049,6 +4049,11 @@ tbody tr:hover {
   display: inline-block;
 }
 
+.premium-datepicker.is-fluid {
+  display: block;
+  width: 100%;
+}
+
 .premium-datepicker__trigger {
   display: flex;
   align-items: center;
@@ -4065,6 +4070,20 @@ tbody tr:hover {
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
   white-space: nowrap;
+}
+
+.premium-datepicker.is-fluid .premium-datepicker__trigger {
+  width: 100%;
+}
+
+.premium-datepicker__trigger svg {
+  flex: 0 0 auto;
+}
+
+.premium-datepicker__trigger span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .premium-datepicker__trigger:hover {
@@ -4194,6 +4213,150 @@ tbody tr:hover {
 
 .premium-datepicker__footer-btn:hover {
   background: var(--color-brand-subtle);
+}
+
+.premium-datetime {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 116px;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+
+.premium-timepicker {
+  position: relative;
+  width: 100%;
+}
+
+.premium-timepicker__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  font-size: 13px;
+  font-weight: 600;
+  outline: 0;
+  padding: 0 11px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.premium-timepicker__trigger svg {
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+}
+
+.premium-timepicker__trigger span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.premium-timepicker__trigger:hover:not(:disabled),
+.premium-timepicker__trigger:focus {
+  border-color: var(--color-brand);
+  background: var(--color-bg-secondary);
+}
+
+.premium-timepicker__trigger:focus {
+  box-shadow: 0 0 0 3px var(--color-brand-subtle);
+}
+
+.premium-timepicker__trigger:disabled {
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+  background: var(--color-bg-secondary);
+  opacity: 0.72;
+}
+
+.premium-timepicker__dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 101;
+  width: 190px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: #ffffff;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
+}
+
+.premium-timepicker__columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.premium-timepicker__label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.premium-timepicker__column {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  max-height: 178px;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+
+.premium-timepicker__column::-webkit-scrollbar {
+  width: 4px;
+}
+
+.premium-timepicker__column::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--color-border);
+}
+
+.premium-timepicker__option {
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.premium-timepicker__option:hover {
+  background: var(--color-brand-subtle);
+  color: var(--color-brand);
+}
+
+.premium-timepicker__option.selected {
+  background: var(--color-brand);
+  color: #0c1923;
+  font-weight: 700;
+}
+
+@media (max-width: 760px) {
+  .premium-datetime {
+    grid-template-columns: 1fr;
+  }
+
+  .premium-timepicker__dropdown {
+    left: 0;
+    right: auto;
+  }
 }
 
 /* ── Communication Map Desktop Upgrades ───────────────────────── */

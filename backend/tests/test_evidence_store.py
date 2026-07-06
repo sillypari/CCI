@@ -85,6 +85,59 @@ def test_dot_nat_syslog_keeps_translation_separate_from_b_party(tmp_path: Path) 
     assert all(candidate.translated_ip for candidate in extraction.candidates)
 
 
+def test_fixed_line_dsl_columns_are_normalized_without_mobile_identifiers(tmp_path: Path) -> None:
+    evidence_store = EvidenceStore(tmp_path)
+
+    upload = evidence_store.ingest_upload("fixed_line_dsl_ipdr.csv", read_fixture("fixed_line_dsl_ipdr.csv"))
+    sessions = evidence_store.list_sessions(msisdn="dsluser-0001@isp", limit=10)
+    extraction = evidence_store.create_extraction(ExtractionRequest(msisdn="dsluser-0001@isp"))
+    mac_rows = evidence_store.mac_frequency(limit=10)
+    mac_filtered = evidence_store.list_sessions(source_mac="AA:BB", limit=10)
+    public_filtered = evidence_store.list_sessions(source_public_ip="103.10.20.31", limit=10)
+    access_filtered = evidence_store.list_sessions(access_identifier="dsluser-0002", limit=10)
+    patterns = evidence_store.suspicious_patterns(limit=50)
+    stats = evidence_store.dashboard_stats()
+    graph = evidence_store.communication_graph(focus="AA:BB:CC:DD:EE:FF", focus_type="mac", limit=20)
+    csv_export = evidence_store.export_sessions_csv()
+
+    assert upload.status == "completed"
+    assert upload.rows_valid == 4
+    assert upload.rows_quarantined == 0
+    assert upload.format_report is not None
+    assert upload.format_report.adapter == "Fixed Line DSL"
+    assert len(sessions) == 3
+
+    first = next(session for session in sessions if session.destination_ip == "157.240.16.35")
+    second = next(session for session in sessions if session.destination_ip == "2001:4860:4860::8888")
+    assert first.a_party_msisdn == "dsluser-0001@isp"
+    assert first.access_identifier == "dsluser-0001@isp"
+    assert first.user_id == "dsluser-0001@isp"
+    assert first.source_ip == "10.10.0.5"
+    assert first.source_port == 52144
+    assert first.source_public_ip == "103.10.20.30"
+    assert first.source_mac == "AA:BB:CC:DD:EE:FF"
+    assert first.ip_allocation == "Dynamic"
+    assert first.user_type == "Dynamic"
+    assert first.imei is None
+    assert first.imsi is None
+    assert second.source_public_ip == "2401:4900:1c00::10"
+    assert extraction.total_sessions == 3
+    assert len(mac_rows) == 2
+    assert mac_rows[0].source_mac == "AA:BB:CC:DD:EE:FF"
+    assert mac_rows[0].shared_access_identifiers == 2
+    assert sorted(mac_rows[0].access_identifiers) == ["dsluser-0001@isp", "dsluser-0002@isp"]
+    assert len(mac_filtered) == 3
+    assert public_filtered[0].a_party_msisdn == "dsluser-0002@isp"
+    assert access_filtered[0].source_public_ip == "103.10.20.31"
+    assert stats.unique_macs == 2
+    assert stats.shared_macs == 1
+    assert stats.unique_source_public_ips == 4
+    assert {pattern.pattern_type for pattern in patterns} >= {"shared_source_mac", "access_identifier_multiple_macs"}
+    assert graph.metrics.sessions == 3
+    assert "source_public_ip" in csv_export
+    assert "source_mac" in csv_export
+
+
 def test_translated_ip_without_destination_is_rejected(tmp_path: Path) -> None:
     evidence_store = EvidenceStore(tmp_path)
 

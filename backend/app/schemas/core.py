@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 
 Classification = Literal["p2p", "relay", "unknown"]
-GraphNodeKind = Literal["source", "p2p", "relay", "unknown"]
+GraphNodeKind = Literal["source", "mac", "public_ip", "p2p", "relay", "unknown"]
 PatternSeverity = Literal["low", "medium", "high"]
 
 
@@ -113,12 +113,15 @@ class SessionRecord(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     ip_allocation: str | None = None
+    user_type: str | None = None
     protocol: str
+    event_started_at: datetime | None = None
     started_at: datetime
     ended_at: datetime | None = None
     duration_seconds: int
     bytes_up: int
     bytes_down: int
+    source_public_ip: str | None = None
     source_mac: str | None = None
     imei: str | None = None
     device_id: str | None = None
@@ -236,6 +239,9 @@ class DashboardStats(BaseModel):
     unknown: int
     quarantined_rows: int
     avg_confidence: float
+    unique_macs: int = 0
+    shared_macs: int = 0
+    unique_source_public_ips: int = 0
     latest_upload: UploadStatus | None = None
     top_crime_types: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -250,6 +256,8 @@ class ExtractionCandidate(BaseModel):
     session_id: str
     source_ip: str | None = None
     source_port: int | None = None
+    source_public_ip: str | None = None
+    source_mac: str | None = None
     translated_ip: str | None = None
     translated_port: int | None = None
     destination_ip: str
@@ -378,6 +386,21 @@ class ImeiFrequencyReport(BaseModel):
     first_seen: datetime | None = None
     last_seen: datetime | None = None
     handset_hint: str | None = None
+
+
+class MacFrequencyReport(BaseModel):
+    source_mac: str
+    sessions: int
+    access_identifiers: list[str] = Field(default_factory=list)
+    source_public_ips: list[str] = Field(default_factory=list)
+    source_private_ips: list[str] = Field(default_factory=list)
+    user_types: list[str] = Field(default_factory=list)
+    top_destinations: list[dict[str, Any]] = Field(default_factory=list)
+    total_bytes: int
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
+    shared_access_identifiers: int = 0
+    public_ip_count: int = 0
 
 
 class LocationSummaryReport(BaseModel):
